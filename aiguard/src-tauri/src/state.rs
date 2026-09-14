@@ -542,7 +542,11 @@ impl ShortcutConfig {
     pub fn normalized(mut self) -> Result<ShortcutConfig, String> {
         self.toggle_guard = normalize_accelerator(&self.toggle_guard)?;
         self.panic = normalize_accelerator(&self.panic)?;
-        if self.toggle_guard == self.panic {
+        // ⚠ 撞键判定必须用**与书写顺序无关**的标识。
+        // normalize_accelerator 的输出保留了用户输入顺序，所以 "Alt+Ctrl+G" 与
+        // "Ctrl+Alt+G" 是两个不同的字符串、却是同一个物理键位——直接比字符串会漏判，
+        // 两个动作绑到同一个热键上（注册时一个会静默失效）。
+        if accelerator_identity(&self.toggle_guard) == accelerator_identity(&self.panic) {
             return Err("两个动作不能使用同一个快捷键".to_string());
         }
         Ok(self)
@@ -551,11 +555,30 @@ impl ShortcutConfig {
 
 /// 修饰键的规范顺序：`Ctrl → Alt → Shift → Super`。
 ///
-/// **只用于比较**（白名单匹配），不改变 `normalize_accelerator` 的输出顺序——
+/// **只用于比较**（白名单匹配、撞键判定），不改变 `normalize_accelerator` 的输出顺序——
 /// 输出按用户输入顺序，保证「同一输入恒得同一输出」。
 fn canonical_mod_order(mods: &[&'static str]) -> Vec<&'static str> {
     const ORDER: [&str; 4] = ["Ctrl", "Alt", "Shift", "Super"];
     ORDER.iter().copied().filter(|m| mods.contains(m)).collect()
+}
+
+/// 把**已规范化**的加速键（`normalize_accelerator` 的产物）折叠成与书写顺序无关的标识。
+///
+/// 调用前必须先过 `normalize_accelerator`——这里不做合法性校验，只重排修饰键顺序。
+fn accelerator_identity(canon: &str) -> String {
+    let mut parts: Vec<&str> = canon.split('+').map(str::trim).collect();
+    let key = parts.pop().unwrap_or("");
+    let mods: Vec<&'static str> = parts
+        .iter()
+        .filter_map(|p| match *p {
+            "Ctrl" => Some("Ctrl"),
+            "Alt" => Some("Alt"),
+            "Shift" => Some("Shift"),
+            "Super" => Some("Super"),
+            _ => None,
+        })
+        .collect();
+    format!("{}+{}", canonical_mod_order(&mods).join("+"), key)
 }
 
 /// 把用户给的加速键字符串规范化成 `Ctrl+Alt+G` 形态；不在预设白名单内则报错。
