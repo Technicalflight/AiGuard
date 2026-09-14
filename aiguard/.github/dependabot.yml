@@ -13,6 +13,15 @@ updates:
       frontend:
         patterns: ["*"]
     labels: ["dependencies"]
+    ignore:
+      # TypeScript 7 是 Go 重写版，npm 包不再导出编译器 API
+      # （`ts.createSourceFile` / `SyntaxKind` / `forEachChild` 全没了），
+      # 只剩一个明确标着 unstable 的 `typescript/unstable/ast`。
+      # 本仓库的 scripts/i18n_check.mjs 与 scripts/i18n_extract.mjs 正是建在旧 API 上，
+      # 直接升 7 会让 `npm run i18n:check` 当场崩掉（实测：ts.ScriptTarget undefined）。
+      # 迁移到 unstable API 属独立专项，完成前不接受自动 PR。
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   # Rust 依赖（workspace 根，覆盖 core 与 src-tauri）
   - package-ecosystem: "cargo"
