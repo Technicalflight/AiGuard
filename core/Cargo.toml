@@ -11,7 +11,7 @@ dashmap = "6"
 uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 # 敏感内存主动擦除（原文映射表、请求采样在销毁时覆写字节）
 zeroize = { version = "1", features = ["std"] }
