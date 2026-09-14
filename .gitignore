@@ -1,0 +1,11 @@
+node_modules/
+dist/
+target/
+src-tauri/gen/
+*.log
+.DS_Store
+
+# 本地工具产物（图标/截图生成器依赖，不入库）
+.pil_local/
+py_check.txt
+snap.txt
