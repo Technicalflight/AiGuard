@@ -135,6 +135,13 @@ jobs:
   cross:
     name: 跨平台编译与测试（${{ matrix.label }}）
     runs-on: ${{ matrix.platform }}
+    env:
+      # 调试构建只带行表、不带完整 DWARF：测试二进制的链接输入缩小一个量级。
+      # 背景：macOS runner（arm64 + 新版 ld）上出现过「编译检查全绿、cargo test
+      # 在链接测试二进制阶段失败且日志里没有任何 FAILED/panicked 行」的失败——
+      # 链接层问题不会留下测试层证据。压小链接输入既降低链接器压力也加快构建；
+      # panic 的文件与行号仍来自行表，注解诊断不受影响。
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     strategy:
       fail-fast: false
       matrix:
@@ -200,5 +207,14 @@ jobs:
                 }
               }
             ' /tmp/test.log | head -40
+            # cargo test 对「测试二进制的编译/链接失败」同样返回 101，但日志里
+            # 没有 FAILED / panicked 行（e4e3803 那次 macOS 就是：注解里只剩
+            # exit code 101，失败原因完全不可见）。这类失败单独带出 ^error 行
+            # 与日志末尾——失败必须能被诊断，而不是每次都靠人肉翻日志。
+            if ! grep -qE "^test .+ \.\.\. FAILED|panicked at" /tmp/test.log; then
+              echo "::error::（测试层无 FAILED/panicked 行——应为编译或链接层失败，附 ^error 行与日志末尾）"
+              grep -E "^error" /tmp/test.log | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+              tail -20 /tmp/test.log | while IFS= read -r l; do echo "::error::| $l"; done
+            fi
             exit "$code"
           fi
