@@ -33,6 +33,17 @@ function walk(dir, acc = []) {
 }
 
 /**
+ * 列出待扫描的 Rust 源文件（含 i18n.rs 本身）。
+ *
+ * `scanRustStrings` 会跳过 i18n.rs（它的文案由后端自己按语言取词，前端不参与翻译），
+ * 但**检查 `tr()` 键名是否拼对**时必须反过来——i18n.rs 正是 TABLE 所在，
+ * 而调用点散布在各文件里。所以单独导出这个列表。
+ */
+export function rustFiles(roots = RUST_ROOTS) {
+  return roots.flatMap((r) => (fs.existsSync(r) ? walk(r) : []));
+}
+
+/**
  * 去掉行注释与块注释（保留字符串字面量里的 // 与 /*）。
  *
  * ⚠ 必须同时识别 **Rust 字符字面量**，否则 `'"'` 里的双引号会被当成字符串起点，

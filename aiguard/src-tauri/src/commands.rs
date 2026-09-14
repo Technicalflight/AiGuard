@@ -1403,7 +1403,11 @@ pub struct PanicReport {
 }
 
 /// 由三要素推出证书撤销状态的稳定代号。
-fn cert_state_of(user: bool, machine: bool, note: &str) -> &'static str {
+///
+/// `pub(crate)` 是为了让 `i18n` 的测试能断言「这里产出的每个代号都有对应文案」——
+/// 代号在本文件产生、文案映射在 i18n.rs，两边各改一处都不会报错，
+/// 只有跨文件的测试能拦住（曾经漏过一次，见 `i18n::cert_state_key` 的注释）。
+pub(crate) fn cert_state_of(user: bool, machine: bool, note: &str) -> &'static str {
     match (user, machine) {
         (true, true) => "all",
         (true, false) | (false, true) => "partial",
