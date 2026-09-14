@@ -549,6 +549,15 @@ impl ShortcutConfig {
     }
 }
 
+/// 修饰键的规范顺序：`Ctrl → Alt → Shift → Super`。
+///
+/// **只用于比较**（白名单匹配），不改变 `normalize_accelerator` 的输出顺序——
+/// 输出按用户输入顺序，保证「同一输入恒得同一输出」。
+fn canonical_mod_order(mods: &[&'static str]) -> Vec<&'static str> {
+    const ORDER: [&str; 4] = ["Ctrl", "Alt", "Shift", "Super"];
+    ORDER.iter().copied().filter(|m| mods.contains(m)).collect()
+}
+
 /// 把用户给的加速键字符串规范化成 `Ctrl+Alt+G` 形态；不在预设白名单内则报错。
 pub fn normalize_accelerator(raw: &str) -> Result<String, String> {
     let mut mods: Vec<&'static str> = Vec::new();
@@ -604,7 +613,11 @@ pub fn normalize_accelerator(raw: &str) -> Result<String, String> {
         return Err(format!("快捷键缺少主键: {}", raw));
     };
     let canon = format!("{}+{}", mods.join("+"), key);
-    if !SHORTCUT_PRESETS.contains(&canon.as_str()) {
+    // 白名单按**规范顺序**匹配：修饰键的书写顺序不影响语义，
+    // 所以 "Shift+Ctrl+Alt+G" 与预设里的 "Ctrl+Alt+Shift+G" 是同一个键位，必须一并放行。
+    // （输出仍用上面的 canon，保持用户输入顺序。）
+    let canonical = format!("{}+{}", canonical_mod_order(&mods).join("+"), key);
+    if !SHORTCUT_PRESETS.contains(&canonical.as_str()) {
         return Err(format!("不支持的快捷键组合: {}（请从预设中选择）", canon));
     }
     Ok(canon)

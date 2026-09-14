@@ -119,14 +119,23 @@ const TABLE: &[(&str, &str, &str)] = &[
 
 /// 信号语义名 → 英文展示名。中文展示名以 core 的 SIGNAL_CATALOG 为唯一真相。
 /// 覆盖度由 `test_signal_labels_cover_catalog` 强制。
+///
+/// ⚠ 这里的英文必须与前端词典（`src/i18n-dict-ui.ts` / `src/i18n-dict-backend.ts` 里
+/// 那 7 条中文展示名对应的译文）**逐字一致**——两边分别服务「窗口外」（托盘 / 系统通知）
+/// 与「窗口内」（信号卡片），一旦漂移，同一个信号会在两处显示不同的英文名。
+/// 这条约束由 `scripts/i18n_check.mjs` 的「信号英文名跨进程一致性」检查兜住。
+///
+/// 另注：措辞必须由 SIGNAL_CATALOG 的中文原样对应，不能改用
+/// "Response injection" / "Cross-request memory" 这类贴近参照项目的说法
+/// （对应中文「响应投毒 / 跨请求污染」在命名规范里是禁止的）。
 const SIGNAL_EN: &[(&str, &str)] = &[
-    ("error_leak", "Error leak"),
+    ("error_leak", "Error leakage"),
     ("identity_swap", "Model swap"),
-    ("tool_call_rewrite", "Verbatim tampering"),
+    ("tool_call_rewrite", "Replay tampering"),
     ("sse_anomaly", "Stream anomaly"),
-    ("response_poison", "Response injection"),
-    ("cross_request_pollution", "Cross-request memory"),
-    ("dangerous_action", "Destructive command"),
+    ("response_poison", "Response smuggling"),
+    ("cross_request_pollution", "Memory residue"),
+    ("dangerous_action", "High-risk commands"),
 ];
 
 // ═══════════════════════ 取词与格式化 ═══════════════════════
@@ -247,6 +256,12 @@ pub fn notify_text(lang: Language, events: &[AuditEventRow], top_rank: u8) -> (S
     let mut names: Vec<String> = Vec::new();
     for e in events {
         let n = signal_label(lang, &e.signal_type);
+        // 展示名可能取不到（未知 signal_type）→ 返回空串。
+        // 必须在 push 之前滤掉：否则 names = [""] 长度为 1，会绕过下面的
+        // names.is_empty() 分支，拼出「」风险 · host（共 N 条）这种空书名号文案。
+        if n.trim().is_empty() {
+            continue;
+        }
         if !names.contains(&n) {
             names.push(n);
         }
@@ -422,7 +437,9 @@ mod tests {
 
         let en = tray_event_line(Language::En, &row("HIGH", "response_poison", "api.openai.com"));
         assert!(en.contains("High"), "{}", en);
-        assert!(en.contains("Response injection"), "{}", en);
+        // 英文展示名以 SIGNAL_EN 为准，必须与前端词典逐字一致
+        // （跨进程一致性由 scripts/i18n_check.mjs 对账）。
+        assert!(en.contains("Response smuggling"), "{}", en);
         assert!(!en.contains("sk_prefix_secret"));
     }
 

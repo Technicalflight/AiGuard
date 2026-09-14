@@ -18,6 +18,7 @@ import fs from "node:fs";
 const FILES = [
   { path: "src/i18n-dict-ui.ts", name: "UI_DICT" },
   { path: "src/i18n-dict-backend.ts", name: "BACKEND_DICT" },
+  { path: "src/i18n-dict-runtime.ts", name: "RUNTIME_DICT" },
 ];
 
 /** 解析词典文件：取出头部注释（原样保留）与键值对。 */
@@ -48,7 +49,7 @@ if (args.length === 0) {
 }
 
 const dicts = FILES.map((f) => ({ ...f, ...parseDict(f.path) }));
-const pending = new Map(); // key -> { en, owner }
+const pending = new Map(); // key -> { en, owners: Dict[] }
 const fresh = []; // 词典里原本没有的键
 
 for (const a of args) {
@@ -62,19 +63,27 @@ for (const a of args) {
       console.error(`同一个键被给了两次译文：${JSON.stringify(k)}`);
       process.exit(1);
     }
-    const owner = dicts.find((d) => d.entries.has(k)) ?? dicts[0];
-    if (!dicts.some((d) => d.entries.has(k))) fresh.push(k);
-    pending.set(k, { en, owner });
+    // 有些键**同时**存在于两本词典：信号名（如「报错泄密」）既被 App.tsx 的 t() 使用，
+    // 又由 core/src/audit.rs 定义。只更新第一本会让另一本留着空值，
+    // 自检就会报「BACKEND_DICT 未翻译」——所以这里要更新所有含该键的词典。
+    const owners = dicts.filter((d) => d.entries.has(k));
+    if (owners.length === 0) {
+      fresh.push(k);
+      owners.push(dicts[0]);
+    }
+    pending.set(k, { en, owners });
   }
 }
 
 let added = 0;
 let changed = 0;
-for (const [k, { en, owner }] of pending) {
-  const old = owner.entries.get(k);
-  if (old === undefined) added++;
-  else if (old !== en) changed++;
-  owner.entries.set(k, en);
+for (const [k, { en, owners }] of pending) {
+  for (const owner of owners) {
+    const old = owner.entries.get(k);
+    if (old === undefined) added++;
+    else if (old !== en) changed++;
+    owner.entries.set(k, en);
+  }
 }
 
 for (const d of dicts) writeDict(d.path, d.header, d.entries);
