@@ -1408,7 +1408,9 @@ function RequestDetail({
               <div className="rule-hit" key={i}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <KindBadge kind={tag} />
-                  <span style={{ fontWeight: 500 }}>{r ? r.name : t("规则详情不可用（规则已被删除）")}</span>
+                  <span style={{ fontWeight: 500 }}>
+                    {r ? tb(r.name) : t("规则详情不可用（规则已被删除）")}
+                  </span>
                   <Badge
                     text={r ? (r.action === "block" ? t("拦截") : t("替换为占位符")) : "—"}
                     tone={r ? (r.action === "block" ? "red" : "green") : "gray"}
@@ -1970,7 +1972,7 @@ function RulesPage() {
       {/* 编辑规则弹窗 */}
       {editTarget && (
         <Modal
-          title={`${t("编辑规则 · ")}${editTarget.name}`}
+          title={`${t("编辑规则 · ")}${tb(editTarget.name)}`}
           onClose={() => setEditTarget(null)}
           footer={
             <>
@@ -3200,7 +3202,7 @@ function SettingsPage({
                   : hardening.data_dir_scope === "shared"
                     ? t("数据目录可能对同机其它账户开放")
                     : t("数据目录权限未能确认")
-              }${t("。")}${hardening.data_dir_detail}`}
+              }${t("。")}${tb(hardening.data_dir_detail)}`}
             />
 
             {hardening.client_processes.length > 0 && (

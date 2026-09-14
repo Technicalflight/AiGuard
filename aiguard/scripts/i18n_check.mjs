@@ -315,6 +315,131 @@ for (const file of ["src/App.tsx", "src/i18n.ts"]) {
   })(sf);
 }
 
+// ─────────── 1d. 后端中文字段被裸渲染 ───────────
+//
+// 1c 只能查「字面量」。「后端流进来的字符串在渲染处忘了 tb()」是**另一类**漏译，
+// 而且更难发现：词典里 100% 有译文、t() 调用点全绿、构建全绿，
+// 只有把界面切到英文肉眼才看得见。实测这一类出现过 7 次
+// （信号名 / 证据串 / CA 详情 / 端口状态 / 命中规则名 / 规则编辑标题）。
+//
+// 判据是**数据驱动**的：`api.ts` 的 MOCK 就是「后端产出的样本」，所以
+//     「MOCK 里值含中文的字段名」 == 「运行时可能带中文的字段名」
+// 把这些字段在 App.tsx 的 JSX 表达式里的渲染点找出来，排除已包 t()/tf()/tb() 的。
+//
+// ⚠ 已知的精度边界：字段名会与前端自造的数据撞名（如下拉选项的 `label`、
+// 富文本的 `text`）。这类**确实不需要翻译**的渲染点走 RAW_FIELD_ALLOW 白名单，
+// 每条都要写清为什么可以不翻——否则白名单会变成噪音垃圾桶。
+
+const cjkFields = new Set();
+{
+  const src = fs.readFileSync("src/api.ts", "utf8");
+  const sf = ts.createSourceFile("src/api.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const isCjkStr = (n) =>
+    (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) && HAS_CJK.test(n.text);
+  (function walk(n) {
+    if (ts.isPropertyAssignment(n) && n.initializer) {
+      const name =
+        ts.isIdentifier(n.name) || ts.isStringLiteral(n.name) ? n.name.text : null;
+      if (!name) {
+        ts.forEachChild(n, walk);
+        return;
+      }
+      // 字符串字段，或「字符串数组」字段（如 locations: ["当前用户信任库"]）
+      if (isCjkStr(n.initializer)) cjkFields.add(name);
+      else if (
+        ts.isArrayLiteralExpression(n.initializer) &&
+        n.initializer.elements.some(isCjkStr)
+      )
+        cjkFields.add(name);
+    }
+    ts.forEachChild(n, walk);
+  })(sf);
+}
+
+/**
+ * 明确不需要翻译的字段，整体豁免。
+ * 只放行**语义上确定与语言无关**的字段，别把它当噪音垃圾桶。
+ */
+const RAW_FIELD_ALLOW = new Set([
+  // 用户自己写的正则**原文**——翻译它等于改掉用户配置的语义
+  "regex",
+]);
+
+const rawFieldRenders = [];
+{
+  const file = "src/App.tsx";
+  const src = fs.readFileSync(file, "utf8");
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+  const wrapped = [];
+  (function walk(n) {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      (n.expression.text === "t" || n.expression.text === "tf" || n.expression.text === "tb")
+    ) {
+      for (const a of n.arguments) wrapped.push([a.getStart(sf), a.getEnd()]);
+    }
+    ts.forEachChild(n, walk);
+  })(sf);
+
+  const inWrapped = (n) => {
+    const s = n.getStart(sf);
+    const e = n.getEnd();
+    return wrapped.some(([a, b]) => s >= a && e <= b);
+  };
+
+  // 下面三类虽然出现了字段名，但**并不是在展示它的内容**，必须排除，
+  // 否则规则会被误报淹没（实测这 3 条把 10 处命中压到 1 处真问题）。
+  const isFormBinding = (n) => {
+    const p = n.parent;
+    return (
+      !!p &&
+      ts.isJsxExpression(p) &&
+      !!p.parent &&
+      ts.isJsxAttribute(p.parent) &&
+      ["value", "defaultValue"].includes(p.parent.name.getText(sf))
+    );
+  };
+  const isCondition = (n) => {
+    const p = n.parent;
+    if (!p) return false;
+    if (ts.isConditionalExpression(p) && p.condition === n) return true;
+    if (
+      ts.isBinaryExpression(p) &&
+      p.left === n &&
+      (p.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+        p.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+    )
+      return true;
+    return ts.isPrefixUnaryExpression(p) && p.operator === ts.SyntaxKind.ExclamationToken;
+  };
+  /** 方法调用的接收者：`note.includes("未找到")` 是拿去做比较，不是展示。 */
+  const isMethodReceiver = (n) => {
+    const p = n.parent;
+    return !!p && ts.isPropertyAccessExpression(p) && p.expression === n;
+  };
+
+  (function walk(n, inJsx) {
+    const nowJsx = inJsx || ts.isJsxExpression(n);
+    if (ts.isPropertyAccessExpression(n) && nowJsx) {
+      const field = n.name.text;
+      if (
+        cjkFields.has(field) &&
+        !RAW_FIELD_ALLOW.has(field) &&
+        !inWrapped(n) &&
+        !isFormBinding(n) &&
+        !isCondition(n) &&
+        !isMethodReceiver(n)
+      ) {
+        const { line } = sf.getLineAndCharacterOfPosition(n.getStart(sf));
+        rawFieldRenders.push({ line: line + 1, text: n.getText(sf) });
+      }
+    }
+    ts.forEachChild(n, (c) => walk(c, nowJsx));
+  })(sf, false);
+}
+
 // ─────────── 汇总 ───────────
 
 const problems = [];
@@ -342,6 +467,15 @@ if (unwrappedCjk.length) {
   );
   for (const u of unwrappedCjk) {
     problems.push(`    ~ ${u.file}:${u.line}  ${JSON.stringify(u.text.slice(0, 60))}`);
+  }
+}
+
+if (rawFieldRenders.length) {
+  problems.push(
+    `后端中文字段被裸渲染（${rawFieldRenders.length} 处）——词典里有译文但没人调用，英文模式下会露出中文：`
+  );
+  for (const r of rawFieldRenders) {
+    problems.push(`    ~ src/App.tsx:${r.line}  ${r.text}`);
   }
 }
 
