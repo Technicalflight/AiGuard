@@ -306,12 +306,13 @@ const KEYCHAIN_SERVICE: &str = "com.technicalflight.aiguard.ca-key";
 /// 子进程里不可用）；同一台机器上的单用户桌面场景可接受，且窗口极短。
 #[cfg(target_os = "macos")]
 fn keychain_store(account: &str, secret: &str) -> Result<(), String> {
-    // ⚠ `security` CLI 对 `-w` 值的尾部换行不保证字节保真（入库是否原样存、
-    // `find -w` 输出是否补换行，都随版本而异）——尾部换行过不了这道 CLI。
-    // 入库前先把尾部换行归一化，配合读取侧只剥一层工具换行，往返结果就
-    // 是确定的：PEM 正文逐字节一致（结尾换行对 PEM 解析无意义，证书指纹
-    // 不受影响）。首个 macOS CI 的往返测试红过两次，都是这个坑。
-    let secret = secret.trim_end_matches(['\n', '\r']);
+    // ⚠ `security` CLI 的 `-w` 对**含控制字符**（如换行）的值不保真：实测多行
+    // PEM 裸存后 `find -w` 回来的是整串**十六进制编码**——CLI 输出层认不出
+    // 「可打印单行」就转 hex，尾部换行剥几层都救不回来（首个 macOS CI 的
+    // 往返测试连红三轮就是这个坑）。入库前先 base64 编码：纯 ASCII 单行，
+    // CLI 原样存取；读取侧解码回原字节，多行 PEM 逐字节保真。
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(secret.as_bytes());
     let out = std::process::Command::new("security")
         .args([
             "add-generic-password",
@@ -321,7 +322,7 @@ fn keychain_store(account: &str, secret: &str) -> Result<(), String> {
             "-s",
             KEYCHAIN_SERVICE,
             "-w",
-            secret,
+            &encoded,
         ])
         .output()
         .map_err(|e| format!("无法调用 security 命令: {}", crate::state::safe_err(&e)))?;
@@ -353,10 +354,8 @@ fn keychain_load(account: &str) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    // ⚠ `security -w` 只在输出末尾**追加一层**换行；这里只能剥这一层，
-    // 不能用 trim_end_matches 全剥——存进去的 PEM 自带结尾换行，全剥会
-    // 破坏往返保真（首个 macOS CI 上 test_keychain_roundtrip 就是这么红的：
-    // 断言 left != right，left 少一个 \n）。
+    // `security -w` 会在输出末尾追加一层换行：只剥这一层（值本身以 base64
+    // 存储，末字符不会是换行，所以「剥一层」在任何 CLI 版本下都恰好剥干净）。
     let mut raw = crate::console::decode_console(&out.stdout);
     if raw.ends_with('\n') {
         raw.pop();
@@ -365,9 +364,18 @@ fn keychain_load(account: &str) -> Option<String> {
         }
     }
     if raw.is_empty() {
-        None
-    } else {
-        Some(raw)
+        return None;
+    }
+    // keychain_store 写入的是 base64：解回原字节，多行 PEM 逐字节保真。
+    // 解不开（外部写入 / 旧格式）就按原文返回——宁可原文，也不让读取
+    // 失败把私钥弄丢。
+    use base64::Engine as _;
+    match base64::engine::general_purpose::STANDARD.decode(raw.as_bytes()) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => Some(text),
+            Err(_) => Some(raw),
+        },
+        Err(_) => Some(raw),
     }
 }
 
@@ -1157,16 +1165,11 @@ mod tests {
             eprintln!("钥匙串不可用，跳过往返测试");
             return;
         }
-        // security CLI 对值的尾部换行不保证字节保真（入库/输出两侧行为随版本
-        // 而异），存储/读取两侧已把尾部换行归一化——往返断言按「正文逐字节
-        // 一致」比较。expect 先把「读不回」与「读回但不同」区分开。
+        // 入库走 base64、读取侧解码：往返必须**逐字节**一致（含结尾换行）。
+        // expect 先把「读不回」与「读回但不同」区分开。
         let loaded = keychain_load(account)
             .expect("刚写入的钥匙串条目应能读回（读取通道坏了）");
-        assert_eq!(
-            loaded.trim_end_matches(['\n', '\r']),
-            pem.trim_end_matches(['\n', '\r']),
-            "钥匙串往返后 PEM 正文必须逐字节一致"
-        );
+        assert_eq!(loaded, pem, "钥匙串往返后必须逐字节一致（含结尾换行）");
         let _ = std::process::Command::new("security")
             .args([
                 "delete-generic-password",
