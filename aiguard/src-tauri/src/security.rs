@@ -306,6 +306,12 @@ const KEYCHAIN_SERVICE: &str = "com.technicalflight.aiguard.ca-key";
 /// 子进程里不可用）；同一台机器上的单用户桌面场景可接受，且窗口极短。
 #[cfg(target_os = "macos")]
 fn keychain_store(account: &str, secret: &str) -> Result<(), String> {
+    // ⚠ `security` CLI 对 `-w` 值的尾部换行不保证字节保真（入库是否原样存、
+    // `find -w` 输出是否补换行，都随版本而异）——尾部换行过不了这道 CLI。
+    // 入库前先把尾部换行归一化，配合读取侧只剥一层工具换行，往返结果就
+    // 是确定的：PEM 正文逐字节一致（结尾换行对 PEM 解析无意义，证书指纹
+    // 不受影响）。首个 macOS CI 的往返测试红过两次，都是这个坑。
+    let secret = secret.trim_end_matches(['\n', '\r']);
     let out = std::process::Command::new("security")
         .args([
             "add-generic-password",
@@ -1151,7 +1157,16 @@ mod tests {
             eprintln!("钥匙串不可用，跳过往返测试");
             return;
         }
-        assert_eq!(keychain_load(account).as_deref(), Some(pem));
+        // security CLI 对值的尾部换行不保证字节保真（入库/输出两侧行为随版本
+        // 而异），存储/读取两侧已把尾部换行归一化——往返断言按「正文逐字节
+        // 一致」比较。expect 先把「读不回」与「读回但不同」区分开。
+        let loaded = keychain_load(account)
+            .expect("刚写入的钥匙串条目应能读回（读取通道坏了）");
+        assert_eq!(
+            loaded.trim_end_matches(['\n', '\r']),
+            pem.trim_end_matches(['\n', '\r']),
+            "钥匙串往返后 PEM 正文必须逐字节一致"
+        );
         let _ = std::process::Command::new("security")
             .args([
                 "delete-generic-password",
