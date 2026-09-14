@@ -1,0 +1,43 @@
+# ─────────── 换行符策略 ───────────
+#
+# 背景：**索引里存的已经是 LF，但工作区里混着 CRLF 和 LF**（`git checkout` 检出的是
+# CRLF，编辑器与脚本工具写出来的是 LF）。两边不一致，于是每次 `git add` 都刷一屏：
+#     warning: in the working copy of 'x', LF will be replaced by CRLF the next time Git touches it
+# （本机 core.autocrlf=true 且没有属性文件时，git 会在检出时把 LF 换成 CRLF，
+#  所以它认为工作区的 LF 文件「迟早要变」，就发这条警告。）
+#
+# 统一成 **LF**，让索引与工作区一致，警告从此消失：
+#   - `text=auto`：交给 git 判定哪些是文本文件（按内容，不只看扩展名）
+#   - `eol=lf`：检出到工作区也用 LF。**这一项才会消掉警告**——
+#     它覆盖 core.autocrlf；换成 `eol=crlf` 只会让警告继续刷（警告说的正是
+#     「检出时会被换成 CRLF」这件事）。
+#   - 与编辑器 / 脚本 / CI 的默认行为一致，跨平台结果可复现。
+#
+# 落地记录（2026-09-14，实际做过什么）：
+#   - 索引里**本来就存的是 LF**（本机 core.autocrlf=true 在提交时做了归一化），
+#     所以 `git add --renormalize .` 是**空操作**，没有任何内容改动。
+#     这一点值得记下来：我一开始以为「历史里存的是 CRLF」，那是错的。
+#     真相用 `git ls-files --eol` 一看就知道（`i/lf`），别靠肉眼或 grep 猜。
+#   - 真正不一致的是**工作区**：61 个文本文件里 3 个还是 CRLF
+#     （被 `git checkout` 检出成 CRLF，而编辑器写出来的是 LF，混在一起）。
+#     已把这 3 个转成 LF。转换后与索引 blob 哈希完全相同，零内容变更。
+#   - 现在的状态：61 个文本文件全部 `i/lf w/lf`，9 个二进制 `i/-text w/-text`。
+#
+# 以后要批量检查换行符，用这条命令，比肉眼或 grep 可靠：
+#     git ls-files --eol
+#
+# 注意：`eol` 会覆盖 `core.autocrlf`，所以本机那个 `core.autocrlf=true` 不用改。
+
+* text=auto eol=lf
+
+# ─────────── 二进制文件 ───────────
+# 必须显式声明：否则 git 会把它们当文本逐行 diff，并在检出时「修正」换行符，
+# 结果是文件损坏（PNG/ICO 里恰好含 0x0D 0x0A 字节就会中招）。
+*.png  binary
+*.ico  binary
+
+# ─────────── 锁文件 ───────────
+# 保持 LF（上面 `*` 已覆盖），这里显式写出来是为了让意图清楚：
+# 这两个文件由工具逐字节校验，任何换行符转换都会让校验失败。
+package-lock.json text eol=lf
+Cargo.lock        text eol=lf
