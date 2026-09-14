@@ -218,10 +218,27 @@ AIGUARD_CHROMIUM=/path/to/chrome npm run i18n:e2e
   记忆残留 / 高危指令。
 - **禁止「主动探针」/「canary」/「金丝雀」**，统一叫「主动核查」「追踪标记」。
 
-## 六、待决策（非缺陷）
+## 六、已决策事项（非缺陷）
 
-1. **`tauri.conf.json` 的 `productName: "AI 安全卫士"`** —— 目前不随语言切换。
-   它会进安装包名 / 开始菜单 / 可执行文件名，跟随语言意味着构建产物随语言分叉。
-   倾向：**保持不切**，因为安装包名属于产品标识而非界面文案。
-2. **`.gitattributes`** —— 仓库纯 Windows，每次提交有大量 CRLF 警告。补一个
-   `* text=auto eol=lf` 可以消掉，但会让历史文件的换行行为变化一次。
+1. **`tauri.conf.json` 的 `productName: "AI 安全卫士"` 不随语言切换** —— 已确认保持现状。
+   它会进安装包名 / 开始菜单 / 可执行文件名，跟随语言意味着构建产物随语言分叉；
+   安装包名属于**产品标识**而非界面文案，不该跟着界面语言变。
+
+2. **`.gitattributes` 已补**（仓库根，`* text=auto eol=lf`）—— 换行符统一为 LF。
+
+   选 LF 而不是 CRLF 的关键：**只有 `eol=lf` 能消掉那条警告**。警告说的正是
+   「检出时会被换成 CRLF」，所以写 `eol=crlf` 只会让同一个警告继续刷。
+   `eol` 会覆盖 `core.autocrlf`，本机的 `core.autocrlf=true` 无需改动。
+
+   ⚠ 排查时的一个坑：**别靠肉眼或 grep 猜索引里存的是什么**。我一开始判断
+   「历史里索引存的是 CRLF」，据此还打算做一次全量 renormalize——实际
+   `git add --renormalize .` 是空操作。真相只有一条命令能给：
+
+   ```bash
+   git ls-files --eol      # i/lf 是索引、w/lf 是工作区，一眼看清
+   ```
+
+   真实情况是索引本来就存 LF（`core.autocrlf=true` 提交时已归一化），
+   不一致的是**工作区**（`git checkout` 检出 CRLF、编辑器写 LF，混在一起）。
+   最终：61 个文本文件全部 `i/lf w/lf`，9 个二进制 `i/-text w/-text`，
+   零内容变更（工作区文件与索引 blob 哈希完全相同）。
