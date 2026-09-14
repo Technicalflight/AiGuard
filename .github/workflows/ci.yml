@@ -46,7 +46,8 @@ jobs:
       - uses: actions/checkout@v4
 
       # tauri-build 在编译期校验 frontendDist（../dist）存在；
-      # 空目录即可满足，真实前端产物由 frontend job 与 release 流程负责。
+      # 空目录即可满足（tauri-codegen 只判 exists()，不要求 index.html），
+      # 真实前端产物由 frontend job 与 release 流程负责。
       - name: 占位 dist（满足 tauri-build 的存在性校验）
         run: New-Item -ItemType Directory -Force -Path dist
 
@@ -54,7 +55,24 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
 
-      # 必须跑整个工作区：core 与 src-tauri 都要覆盖，
-      # 只跑 -p aiguard-core 会漏掉代理 / 存储 / 命令层的回归。
-      - name: cargo test --workspace
-        run: cargo test --workspace
+      # 编译与运行分成两步：编译失败和测试失败在步骤名上就能区分开，
+      # 不必去猜「到底是编不过还是测不过」。
+      - name: 编译测试二进制
+        run: cargo test --workspace --no-run
+
+      # 失败时把测试名写成 Actions 注解。
+      # 动机：Actions 日志要仓库写权限才能下载，注解任何人都能读——
+      # 对没有权限的外部贡献者、以及对自动化排查都更友好。
+      - name: 运行测试
+        shell: pwsh
+        run: |
+          $out = & cargo test --workspace --no-fail-fast 2>&1 | ForEach-Object { "$_" }
+          $code = $LASTEXITCODE
+          $out | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0) {
+            $out |
+              Select-String -Pattern 'FAILED|panicked at|^error(\[|:)' |
+              Select-Object -First 40 |
+              ForEach-Object { Write-Host "::error::$($_.Line.Trim())" }
+            exit $code
+          }
