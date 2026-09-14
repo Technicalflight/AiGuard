@@ -1397,7 +1397,7 @@ function RequestDetail({
       </div>
 
       {/* 命中规则 */}
-      <div className="detail-section-title">{t("命中规则（")}{kinds.length}）</div>
+      <div className="detail-section-title">{t("命中规则（")}{kinds.length}{t("）")}</div>
       {kinds.length === 0 ? (
         <div className="muted">{t("本次请求未命中敏感信息规则，原样直通。")}</div>
       ) : (
@@ -1478,7 +1478,7 @@ function RequestDetail({
               <div className="flow-dot">4</div>
               <div className="flow-body">
                 <div className="flow-title">{t("脱敏后的请求转发 AI 服务")}</div>
-                <div className="muted">{t("AI 服务只能看到占位符，无法获得真实内容（本次请求指纹：")}{log.req_hash || "—"}）。</div>
+                <div className="muted">{t("AI 服务只能看到占位符，无法获得真实内容（本次请求指纹：")}{log.req_hash || "—"}{t("）。")}</div>
               </div>
             </div>
             <div className="flow-step">
@@ -2333,7 +2333,7 @@ function SecurityPage() {
               value={checkDraft.path}
               options={[
                 { value: "/v1/chat/completions", label: t("/v1/chat/completions（OpenAI 兼容）") },
-                { value: "/v1/messages", label: "/v1/messages（Anthropic）" },
+                { value: "/v1/messages", label: t("/v1/messages（Anthropic）") },
               ]}
               onChange={(v) => setCheckDraft({ ...checkDraft, path: v })}
             />
@@ -2484,7 +2484,7 @@ function SecurityPage() {
                       aria-hidden
                     />
                     <span style={{ marginLeft: 8 }}>
-                      {signalNameOf[e.signal_type] ?? e.signal_type}
+                      {tb(signalNameOf[e.signal_type] ?? e.signal_type)}
                     </span>
                   </td>
                   <td>
@@ -2500,7 +2500,10 @@ function SecurityPage() {
                       {e.severity}
                     </span>
                   </td>
-                  <td className="muted mono">{e.evidence}</td>
+                  {/* 证据串由后端拼装，内含中文标签（如 `[双向覆盖符]`、
+                      `递归删除根目录/家目录`）——必须过 tb()，否则英文界面里
+                      只有这半截是中文 */}
+                  <td className="muted mono">{tb(e.evidence)}</td>
                   <td className="muted mono">{e.sid}</td>
                 </tr>
               ))}
@@ -2982,7 +2985,13 @@ function SettingsPage({
                   <>
                     <span className="sec-dot green" aria-hidden />
                     <span style={{ color: "var(--brand)" }}>{t("已安装")}</span>
-                    <span className="muted">（{trust.locations.join("、")}）</span>
+                    {/* 后端给的是中文位置名数组，括号与顿号也得跟着语言走：
+                        英文要用半角括号 + 逗号，不能把中文标点留在英文句子里 */}
+                    <span className="muted">
+                      {t("（")}
+                      {trust.locations.map((l) => tb(l)).join(t("、"))}
+                      {t("）")}
+                    </span>
                   </>
                 ) : (
                   <>
@@ -2998,7 +3007,11 @@ function SettingsPage({
               className="muted"
               style={{ marginTop: 6, wordBreak: "break-all" }}
             >
-              {trust?.detail ?? ca?.installed_hint ?? t("证书文件将在应用启动时自动生成")}
+              {tb(
+                trust?.detail ??
+                  ca?.installed_hint ??
+                  t("证书文件将在应用启动时自动生成")
+              )}
             </div>
             <div className="muted mono" style={{ marginTop: 4, wordBreak: "break-all" }}>
               {ca?.cert_path ?? ""}
@@ -3129,9 +3142,9 @@ function SettingsPage({
                   : "amber"
               }
               title={t("代理端口占用检测")}
-              desc={`${portLive?.detail ?? t("未取到端口状态")}${t("；PAC 服务：")}${
+              desc={`${tb(portLive?.detail ?? t("未取到端口状态"))}${t("；PAC 服务：")}${tb(
                 hardening.pac_port.detail
-              }`}
+              )}`}
             >
               <button className="btn mini" onClick={() => void refreshHardening()}>
                 {t("重新检测")}
@@ -3187,13 +3200,13 @@ function SettingsPage({
                   : hardening.data_dir_scope === "shared"
                     ? t("数据目录可能对同机其它账户开放")
                     : t("数据目录权限未能确认")
-              }。${hardening.data_dir_detail}`}
+              }${t("。")}${hardening.data_dir_detail}`}
             />
 
             {hardening.client_processes.length > 0 && (
               <div style={{ paddingTop: 12, borderTop: "1px solid var(--line)" }}>
                 <div className="muted">
-                  {t("已通过本代理发起请求的程序（")}{hardening.client_processes.length}）
+                  {t("已通过本代理发起请求的程序（")}{hardening.client_processes.length}{t("）")}
                 </div>
                 <div
                   className="mono"
@@ -3838,7 +3851,7 @@ function UpdateCard() {
       <HardenLine
         tone={st?.failed ? "amber" : st?.has_update ? "amber" : "green"}
         title={t("版本")}
-        desc={`${t("当前：")}${state?.current_version ?? "—"}　${t("最近检查：")}${formatCheckedAt(st?.checked_at ?? 0)}`}
+        desc={`${t("当前：")}${state?.current_version ?? "—"}${t("　")}${t("最近检查：")}${formatCheckedAt(st?.checked_at ?? 0)}`}
       >
         <button className="btn mini" disabled={busy} onClick={() => void check()}>
           {busy ? t("检查中…") : t("立即检查")}
@@ -3848,7 +3861,7 @@ function UpdateCard() {
       {st && !st.failed && st.checked_at > 0 && (
         <div className="muted" style={{ paddingTop: 4 }}>
           {st.has_update
-            ? `${t("发现新版本：")}${st.latest}${st.release_url ? `（${st.release_url}）` : ""}`
+            ? `${t("发现新版本：")}${st.latest}${st.release_url ? `${t("（")}${st.release_url}${t("）")}` : ""}`
             : t("已是最新版本")}
         </div>
       )}
