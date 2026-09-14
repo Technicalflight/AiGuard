@@ -4,6 +4,10 @@
  * 自动切换为 MOCK 数据，保证 UI 完整可预览。
  */
 
+// 原生文件对话框（pickPath）的标题与过滤器名由系统绘制，不经过 React 渲染，
+// 所以它们必须在这里显式翻译，而不是靠 App.tsx 里的 t() 包装。
+import { t } from "./i18n";
+
 // ─────────── 环境检测 ───────────
 
 function isTauri(): boolean {
@@ -101,8 +105,8 @@ export async function listAuditPage(
     const filtered =
       fromTs && toTs
         ? MOCK_LOGS.filter((l) => {
-            const t = Number(l.ts);
-            return t >= fromTs && t < toTs;
+            const ts = Number(l.ts);
+            return ts >= fromTs && ts < toTs;
           })
         : MOCK_LOGS;
     const start = (page - 1) * pageSize;
@@ -301,6 +305,10 @@ const MOCK_RULES: RuleSpec[] = [
   { id: "builtin.email", tag: "EMAIL", name: "邮箱", regex: "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", action: "mask", enabled: true, builtin: true },
   { id: "builtin.apikey", tag: "APIKEY", name: "API 密钥", regex: "sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}", action: "mask", enabled: true, builtin: true },
   { id: "builtin.ip", tag: "IP", name: "IP 地址", regex: "\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b", action: "warn", enabled: true, builtin: true },
+  // name 与 regex 都是**用户数据**：name 是用户给自己的规则起的标签（会被翻译，
+  // 与内置规则名同样走 tb()）；regex 是用户写的正则**原文**，绝不能翻译——
+  // 翻译正则等于改掉用户配置的语义。所以「阿尔法计划|贝塔计划」在英文界面下
+  // 保持原样是正确行为，不是漏译。
   { id: "custom.demo0001", tag: "PROJECT", name: "内部项目代号", regex: "阿尔法计划|贝塔计划", action: "mask", enabled: true, builtin: false },
 ];
 
@@ -319,7 +327,12 @@ const MOCK_BLACKLIST: BlacklistEntry[] = [];
 const MOCK_CA_TRUST: CaTrustStatus = {
   trusted: true,
   locations: ["当前用户信任库"],
-  detail: "已在系统信任库中找到「AI 安全卫士 Local CA」，拦截 HTTPS 流量无需再确认",
+  // ⚠ MOCK 必须**逐字照抄后端**的产出格式，不要自己另写一套说法。
+  // 这里对应 commands.rs 的 check_ca_trust：trusted 时
+  // format!("已在「{}」中找到本应用 CA，拦截 HTTPS 流量即时生效（无需管理员权限）。", locations.join("、"))
+  // 自己编文案有两个坏处：① 预览里看到的和真实运行不一致；
+  // ② 编出来的串不在 BACKEND_DICT 里，英文模式下会整条露出中文。
+  detail: "已在「当前用户信任库」中找到本应用 CA，拦截 HTTPS 流量即时生效（无需管理员权限）。",
 };
 
 const MOCK_SECURITY_POINTS: SecurityPoint[] = [
@@ -464,15 +477,15 @@ export async function pickPath(kind: "exe" | "folder"): Promise<string | null> {
   if (!isTauri()) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");
   if (kind === "folder") {
-    const r = await open({ directory: true, multiple: false, title: "选择文件夹" });
+    const r = await open({ directory: true, multiple: false, title: t("选择文件夹") });
     return typeof r === "string" ? r : null;
   }
   const r = await open({
     multiple: false,
-    title: "选择可执行文件",
+    title: t("选择可执行文件"),
     filters: [
-      { name: "可执行文件", extensions: ["exe"] },
-      { name: "所有文件", extensions: ["*"] },
+      { name: t("可执行文件"), extensions: ["exe"] },
+      { name: t("所有文件"), extensions: ["*"] },
     ],
   });
   return typeof r === "string" ? r : null;

@@ -11,11 +11,17 @@
  *  - t(中文)   ：前端自有文案，精确查表。
  *  - tb(后端串)：后端返回的中文诊断，先跑带占位符的规则（可嵌套），再做长片段替换。
  *
+ * 三本词典合并成一张表：
+ *  - UI_DICT      前端文案（键来自 App.tsx / api.ts 的 t() 调用点）
+ *  - BACKEND_DICT 后端文案（键来自 Rust 字符串字面量）
+ *  - RUNTIME_DICT 运行期产生的中文（系统错误原文、外部命令输出），手工维护
+ *
  * 约束：本文件**不得** import 任何 React 组件或 api.ts（避免循环依赖）。
  */
 import { useEffect, useState } from "react";
 import { UI_DICT } from "./i18n-dict-ui";
 import { BACKEND_DICT } from "./i18n-dict-backend";
+import { RUNTIME_DICT } from "./i18n-dict-runtime";
 
 export type Lang = "zh" | "en";
 
@@ -56,7 +62,8 @@ export function applyLang(next: Lang): void {
 
 // ─────────── 词典 ───────────
 
-const DICT: Record<string, string> = { ...BACKEND_DICT, ...UI_DICT };
+// 后者优先：RUNTIME 里的系统错误原文与前后端文案不会撞键，UI_DICT 放最后最安全。
+const DICT: Record<string, string> = { ...BACKEND_DICT, ...RUNTIME_DICT, ...UI_DICT };
 
 /** 前端文案：key 就是中文原文（中文模式下直接原样返回，零开销）。 */
 export function t(key: string): string {
