@@ -207,12 +207,14 @@ jobs:
           set -e
           echo "cargo test 退出码: $code"
           if [ "$code" -ne 0 ]; then
-            # 注解必须自带结论：只报「哪个用例挂了」不够，panic 的正文在下一行
+            # 注解必须自带结论：只报「哪个用例挂了」不够。panic 的正文在下一行，
+            # assert_eq 的 left/right 具体值还在再下一、二行——一起带出来，
+            # 否则还得再跑一轮才能看到失败的具体值。
             awk '
               /^test .+ \.\.\. FAILED/ { print "::error::" $0; next }
               /panicked at/ {
                 print "::error::" $0
-                if (getline nxt) {
+                for (i = 0; i < 4 && (getline nxt) > 0; i++) {
                   gsub(/^[ \t]+|[ \t]+$/, "", nxt)
                   if (nxt != "") print "::error::" nxt
                 }
