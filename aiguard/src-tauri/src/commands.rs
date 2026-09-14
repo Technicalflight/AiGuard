@@ -1213,9 +1213,37 @@ mod ca_trust_tests {
             .await
             .expect("检测通道应可用");
         println!("trust counters: LM={}, CU={}, TOTAL={}", lm, cu, total);
-        assert!(total > 0, "当前用户根库注册表枚举不应为空（通道异常）");
+        // TOTAL 是「当前用户根库的子键总数」，与本次有没有安装无关。
+        //
+        // ⚠ 不能用 `total > 0` 当通道健康判据：**全新用户配置的根库本来就是空的**
+        //   （CI 的 windows-latest 正是如此，本机只是恰好有 1 条），那时 0 是正确结果，
+        //   不是通道异常。这条断言曾让 CI 挂在一个「只有作者机器才成立」的机器状态上。
+        //
+        // 改为与 winreg 独立数出的子键数对账：
+        //   空库 → 两边都是 0，通过；非空库 → 两边必须相等；
+        //   通道取错注册表路径 / PowerShell 转义出错 / 解析漏行 → 这里会响。
+        assert_eq!(
+            total,
+            hkcu_root_subkey_count(),
+            "注册表枚举结果与独立计数不一致（通道异常）"
+        );
         assert_eq!(lm + cu, 0, "临时 CA 不应已安装进信任库");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 用 `winreg` 独立数一遍当前用户根库的子键数，作为 [`query_trust_counters`]
+    /// 里那段 PowerShell 枚举的对照组。
+    /// 键不存在时计 0 —— 与 `Get-ChildItem -ErrorAction SilentlyContinue` 的行为一致。
+    fn hkcu_root_subkey_count() -> usize {
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
+        use winreg::RegKey;
+        match RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(
+            r"SOFTWARE\Microsoft\SystemCertificates\Root\Certificates",
+            KEY_READ,
+        ) {
+            Ok(key) => key.enum_keys().filter(|k| k.is_ok()).count(),
+            Err(_) => 0,
+        }
     }
 
     /// 证书撤销代号必须覆盖四种结局（窗口外文案据此取词）。
