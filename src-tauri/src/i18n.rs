@@ -300,6 +300,27 @@ pub fn update_notify(lang: Language, current: &str, latest: &str) -> (String, St
     (title, body)
 }
 
+/// 证书撤销的**稳定代号** → 文案 key。
+///
+/// ⚠ `PanicReport::cert_state` 是**稳定代号**（`all` / `partial` / `none` / `absent`，
+/// 见 commands.rs 里的字段注释），**不是文案 key**。原先这里直接
+/// `tr(lang, cert_state)`，于是 `tr(lang, "all")` 查不到表、按约定原样返回代号本身，
+/// 系统通知里就出现「根证书：all」/「root certificate: partial」——**中英双语都错**。
+/// 而且原有的 `test_panic_notify_shapes` 传的是 `"cert.partial"`，一个生产代码
+/// 永远不会产出的值，正好把这条路径遮住了。
+///
+/// 映射放在这里而不是让 `cert_state_of` 直接返回 key：代号是领域状态，
+/// 跨进程（`PanicReport` 会序列化给前端）应当保持与语言无关。
+pub fn cert_state_key(state: &str) -> Option<&'static str> {
+    match state {
+        "all" => Some("cert.all"),
+        "partial" => Some("cert.partial"),
+        "none" => Some("cert.none"),
+        "absent" => Some("cert.absent"),
+        _ => None,
+    }
+}
+
 /// 应急切断完成通知（快捷键触发时唯一的结果通道——没有窗口可回显）。
 pub fn panic_notify(
     lang: Language,
@@ -312,7 +333,11 @@ pub fn panic_notify(
         &tr(lang, "notify.panic.title"),
         &[tr(lang, "app.name")],
     );
-    let cert = tr(lang, cert_state);
+    // 未知代号原样返回，不编造文案（与 tr 的约定一致：宁可露出可疑标识符，也不静默糊弄）
+    let cert = match cert_state_key(cert_state) {
+        Some(key) => tr(lang, key),
+        None => cert_state.to_string(),
+    };
     let body = fmt(
         &tr(lang, "notify.panic.body"),
         &[
@@ -498,15 +523,75 @@ mod tests {
 
     #[test]
     fn test_panic_notify_shapes() {
-        let (title, body) = panic_notify(Language::Zh, 3, 7, true, "cert.partial");
+        // ⚠ 这里传的必须是 `cert_state_of` 真会产出的**代号**（all/partial/none/absent），
+        // 不是文案 key。曾经传 "cert.partial" 这种生产路径永不产出的值，
+        // 于是把「代号被当成 key 直接查表、查不到原样返回」这个 bug 遮住了。
+        let (title, body) = panic_notify(Language::Zh, 3, 7, true, "partial");
         assert!(title.contains("应急切断"), "{}", title);
         assert!(body.contains("3"), "{}", body);
         assert!(body.contains("7"), "{}", body);
         assert!(body.contains("部分撤销"), "{}", body);
 
-        let (_, en) = panic_notify(Language::En, 1, 2, false, "cert.none");
+        let (_, en) = panic_notify(Language::En, 1, 2, false, "none");
         assert!(en.contains("no"), "守护未关闭应显示 no: {}", en);
         assert!(en.contains("not removed"), "{}", en);
+
+        // 未知代号：原样返回，不编造文案
+        let (_, odd) = panic_notify(Language::Zh, 0, 0, false, "wat");
+        assert!(odd.contains("wat"), "未知代号应原样露出: {}", odd);
+    }
+
+    /// **跨文件不变量**：`commands::cert_state_of` 产出的每个代号，
+    /// 都必须能在 `cert_state_key` 里找到对应文案。
+    ///
+    /// 这条测试存在的唯一理由：代号产生在 commands.rs、映射在 i18n.rs，
+    /// 只改一边不会编译失败、不会有运行时异常，只会让系统通知里出现
+    /// 「根证书：all」这种半成品文案。真实漏过一次。
+    #[test]
+    fn test_every_produced_cert_state_has_a_label() {
+        // 覆盖 cert_state_of 的全部四个分支
+        let produced = [
+            crate::commands::cert_state_of(true, true, ""),          // all
+            crate::commands::cert_state_of(true, false, ""),         // partial
+            crate::commands::cert_state_of(false, true, ""),         // partial
+            crate::commands::cert_state_of(false, false, "未找到"),  // absent
+            crate::commands::cert_state_of(false, false, "其它原因"), // none
+        ];
+        for code in produced {
+            let key = cert_state_key(code)
+                .unwrap_or_else(|| panic!("cert_state_of 产出的代号 {:?} 没有对应文案", code));
+            // 光有映射还不够：key 本身必须在 TABLE 里，否则 tr 仍会原样返回 key
+            assert_ne!(
+                tr(Language::En, key),
+                key,
+                "代号 {:?} 映射到的 key {:?} 不在 TABLE 中",
+                code,
+                key
+            );
+            assert_ne!(tr(Language::Zh, key), key, "同上（中文）");
+        }
+    }
+
+    /// 反向守卫：`cert_state_key` 的映射表不能有永远走不到的条目。
+    /// 否则 TABLE 里会留下没人用的 cert.* 文案，日后被误当成「还有别的状态」。
+    #[test]
+    fn test_cert_state_key_has_no_dead_entries() {
+        let all_codes = ["all", "partial", "none", "absent"];
+        for code in all_codes {
+            assert!(
+                cert_state_key(code).is_some(),
+                "cert_state_key 漏了代号 {}",
+                code
+            );
+        }
+        // 每个 cert.* key 都必须由某个代号可达
+        for key in ["cert.all", "cert.partial", "cert.none", "cert.absent"] {
+            assert!(
+                all_codes.iter().any(|c| cert_state_key(c) == Some(key)),
+                "文案 {} 没有任何代号可达（死条目）",
+                key
+            );
+        }
     }
 
     #[test]

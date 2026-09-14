@@ -18,7 +18,13 @@
  */
 import fs from "node:fs";
 import { createRequire } from "node:module";
-import { scanRustStrings, RUST_ROOTS } from "./rust_scan.mjs";
+import {
+  scanRustStrings,
+  RUST_ROOTS,
+  rustFiles,
+  stripComments,
+  stripTestModules,
+} from "./rust_scan.mjs";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -440,6 +446,68 @@ const rawFieldRenders = [];
   })(sf, false);
 }
 
+// ─────────── 2c. tr() 的字面量键必须在 TABLE 里 ───────────
+//
+// `i18n::tr(lang, key)` 查不到 key 时**原样返回 key 本身**（设计如此：宁可界面上
+// 露出一个可疑标识符，也不要静默变成空串）。代价是**键名拼错不会有任何报错**——
+// 托盘菜单里会直接显示 `tray.shwo`，而托盘不经过 React、e2e 扫描也扫不到它，
+// 只有真去右键点托盘才看得见。
+//
+// 所以把每个 `tr(...)` 调用**实参里的字面量**全抓出来，逐个对 TABLE 点名。
+// 用括号配平取整段实参，而不是正则 `tr("..."）`——因为代码里有
+// `tr(if enabled { "tray.status.on" } else { "tray.status.off" })` 这种三元形式。
+//
+// ⚠ 精度边界：动态拼出来的键（如 `tr(&format!("cert.{}", code))`）抓不到。
+// 那类要靠 Rust 侧的单测兜（见 `i18n.rs` 的
+// `test_every_produced_cert_state_has_a_label`——真实漏过一次）。
+const tableKeys = (() => {
+  const src = fs.readFileSync("src-tauri/src/i18n.rs", "utf8");
+  const m = src.match(/const TABLE[^=]*=\s*&\[([\s\S]*?)\n\];/);
+  // ⚠ `\(\s*"` 而不是 `\("`：TABLE 里较长的条目被格式化成多行，
+  // 键名单独占一行（如 notify.panic.body），紧跟 `(` 的写法抓不到它们。
+  return m ? new Set([...m[1].matchAll(/\(\s*"([^"]+)"/g)].map((x) => x[1])) : new Set();
+})();
+
+/** 取 `src[i]` 处 `(` 匹配到的 `)` 的下标；不匹配返回 -1。 */
+function matchParen(src, i) {
+  let depth = 0;
+  for (let j = i; j < src.length; j++) {
+    const c = src[j];
+    if (c === "(") depth++;
+    else if (c === ")") {
+      depth--;
+      if (depth === 0) return j;
+    } else if (c === '"') {
+      // 跳过字符串，避免键里出现括号时配平错位
+      for (j++; j < src.length && src[j] !== '"'; j++) if (src[j] === "\\") j++;
+    }
+  }
+  return -1;
+}
+
+const trKeyIssues = [];
+let trLiteralCount = 0;
+for (const file of rustFiles()) {
+  const src = stripTestModules(stripComments(fs.readFileSync(file, "utf8")));
+  // 匹配 `tr(`，排除 `as_str(` / `from_str(` 之类的后缀命中（要求前面不是标识符字符）
+  for (const m of src.matchAll(/(?<![\w.])tr\(/g)) {
+    const open = m.index + m[0].length - 1;
+    const close = matchParen(src, open);
+    if (close < 0) continue;
+    const args = src.slice(open + 1, close);
+    for (const lit of args.matchAll(/"([^"]*)"/g)) {
+      const key = lit[1];
+      // 只认「像 i18n 键」的实参（含点号、全小写），避免把别的字符串参数误判
+      if (!/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(key)) continue;
+      trLiteralCount++;
+      if (tableKeys.size && !tableKeys.has(key)) {
+        const line = src.slice(0, m.index).split("\n").length;
+        trKeyIssues.push({ file, line, key });
+      }
+    }
+  }
+}
+
 // ─────────── 汇总 ───────────
 
 const problems = [];
@@ -493,6 +561,15 @@ if (signalMismatch.length) {
   for (const s of signalMismatch) problems.push(`    ~ ${s}`);
 }
 
+if (trKeyIssues.length) {
+  problems.push(
+    `tr() 用到的键不在 i18n.rs 的 TABLE 里（${trKeyIssues.length} 处）——查不到会原样返回键名，界面/托盘上直接显示 ${JSON.stringify(trKeyIssues[0].key)} 这种标识符：`
+  );
+  for (const t of trKeyIssues) {
+    problems.push(`    ~ ${t.file}:${t.line}  ${JSON.stringify(t.key)}`);
+  }
+}
+
 const rustMissing = [...rustStrings].filter((k) => !backendDict.has(k));
 if (rustMissing.length) {
   const msg = `Rust 侧文案未进 BACKEND_DICT（${rustMissing.length}/${rustStrings.size} 条，日志类属正常）`;
@@ -529,6 +606,9 @@ console.log(`UI_DICT: ${uiDict.size} 条（调用点 ${used.size} 个）`);
 console.log(`BACKEND_DICT: ${backendDict.size} 条（Rust 侧中文 ${rustStrings.size} 条）`);
 console.log(`RUNTIME_DICT: ${runtimeDict.size} 条（手工维护，运行期系统文案）`);
 console.log(`「数字后碎片」需带空格: ${spacedFrags.size} 条（有问题的 ${fragSpaceIssues.length} 处）`);
+console.log(
+  `i18n TABLE: ${tableKeys.size} 条（tr() 字面量键 ${trLiteralCount} 处，未命中 ${trKeyIssues.length} 处）`
+);
 for (const w of warnings) console.log(`\n[警告] ${w}`);
 for (const p of problems) console.log(`\n[错误] ${p}`);
 
