@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔐 报告安全漏洞（私下渠道）
+    url: https://github.com/Technicalflight/AiGuard/security/advisories/new
+    about: 请勿在公开 Issue 中披露安全漏洞，使用 GitHub Security Advisories 私下报告。
+  - name: 💬 提问与经验交流
+    url: https://github.com/Technicalflight/AiGuard/discussions
+    about: 开放式提问、使用经验分享与自由讨论，请到 Discussions。
+  - name: 📖 先读文档
+    url: https://github.com/Technicalflight/AiGuard#readme
+    about: 使用指南、已知限制与常见问题，README 里基本都有。

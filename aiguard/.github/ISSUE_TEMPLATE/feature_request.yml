@@ -1,0 +1,68 @@
+name: 💡 建议 / 思路 / 安全设计
+description: 功能建议、架构思路、检测规则或安全设计讨论
+title: "[Idea] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这个模板同时用于**功能建议、设计思路与安全设计讨论**。
+        描述**真实场景**比「加个按钮」有用得多 —— 先说清你想解决的问题，方案可以一起聊。
+
+        > 安全漏洞请**不要**在这里提交，按 [SECURITY.md](../blob/main/SECURITY.md) 私下报告。
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 类型
+      options:
+        - 功能建议
+        - 思路 / 架构设计
+        - 安全设计（检测规则 / 防绕过 / 威胁建模）
+        - 界面与体验改进
+        - 文档与翻译
+    validations:
+      required: true
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 你遇到的实际场景
+      description: 你在做什么的时候觉得不够用？谁会遇到同样的问题？
+      placeholder: |
+        我需要在 … 的时候 …，目前只能 …，因此 …
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你希望它怎么工作
+      description: 描述期望的行为或设计。如果涉及安全设计，请说明它想防住什么、以及可能的绕过方式。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你考虑过的替代方案
+      description: 包括「不做这个功能」——有时不做才是对的
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私红线自查
+      description: 本项目要求任何对外通信默认必须关闭，且关闭时一次请求都不发。
+      options:
+        - label: 该建议不引入默认开启的对外通信（若引入，我会说明为何必要且如何做到默认静默）
+          required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息
+      description: 参考实现、截图、相关讨论链接等
+    validations:
+      required: false

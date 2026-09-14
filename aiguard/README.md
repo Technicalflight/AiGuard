@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/logo.png" width="120" alt="AI 安全卫士" />
+<img src="docs/logo.png" width="120" alt="AiGuard" />
 
-# AI 安全卫士 · aiguard
+# AiGuard
 
 **敏感信息不出本机的 AI 流量守护工具**
 
@@ -14,9 +14,17 @@ AI 回复到达后，在本地流式还原为真实数据 —— **原文永不�
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4?logo=windows11&logoColor=white)
-[![License](https://img.shields.io/badge/License-MIT-3DA639)](./LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-important.svg?logo=gnu)](./LICENSE)
+[![License: Commercial](https://img.shields.io/badge/License-Commercial%20Contact-white.svg?logo=github)](https://github.com/Technicalflight/AiGuard/issues)
+
+**[简体中文](./README.md) &nbsp;·&nbsp; [English](./README.en.md)**
 
 </div>
+
+> [!IMPORTANT]
+> AiGuard 目前处于早期开发阶段（v0.1.x），配置格式与内部接口随时可能变化。项目基于 **AGPL-3.0** 开源——欢迎 Star、Issue 与 PR。
+
+AiGuard 是一个**本地优先**的 AI 流量安全网关：以系统代理 + 自签根证书接管发往 AI 服务的 HTTPS 流量，在请求出网前完成敏感信息脱敏，在响应回程时完成流式还原，并全程只读审计上游行为。它不代理你的数据到任何第三方——**守护管道跑在你自己机器上**。
 
 ---
 
@@ -120,7 +128,7 @@ AI 回复到达后，在本地流式还原为真实数据 —— **原文永不�
 flowchart LR
     A["本机 AI 应用<br/>桌面客户端 · CLI · IDE 插件"] -->|"① 请求经系统代理进入"| P
 
-    subgraph P["AI 安全卫士 · 本机守护管道"]
+    subgraph P["AiGuard · 本机守护管道"]
         direction TB
         B["黑 / 白名单评估<br/>黑名单：拦截 或 强制脱敏<br/>白名单：Block 降级 / 直通"] --> C["规则引擎<br/>6 类 PII 检测"]
         C -->|"命中 → 替换为占位符"| V["Vault 会话映射<br/>原文仅存内存 · TTL · 在途锁定"]
@@ -157,11 +165,18 @@ flowchart LR
 | Node.js | 18+ |
 | WebView2 Runtime | Win11 一般自带 |
 
+### 下载安装
+
+前往 [Releases](https://github.com/Technicalflight/AiGuard/releases) 页面下载安装包（Windows `.exe` / `.msi`）。
+
+> [!NOTE]
+> 安装包暂未做代码签名，Windows 首次运行可能出现 SmartScreen 提示，点「仍要运行」即可。
+
 ### 从源码运行
 
 ```bash
-git clone https://github.com/Technicalflight/aiguard.git
-cd aiguard
+git clone https://github.com/Technicalflight/AiGuard.git
+cd AiGuard
 npm install
 npm run tauri dev
 ```
@@ -173,10 +188,12 @@ npm run tauri build
 # 产物位于 src-tauri/target/release/bundle/
 ```
 
-### 纯逻辑单元测试（无需 Tauri 环境）
+### 跑测试与自检
 
 ```bash
-cargo test -p aiguard-core
+cargo test --workspace   # Rust 全工作区单元测试（core + src-tauri）
+npm run build            # 前端类型检查 + 打包
+npm run i18n:check       # 词典自检：键与调用点是否对齐、有无漏译
 ```
 
 ---
@@ -205,37 +222,52 @@ cargo test -p aiguard-core
 ## 🧱 项目结构
 
 ```
-aiguard/
-├── Cargo.toml              # workspace 根（core + src-tauri）
-├── core/                   # Rust 纯逻辑层（aiguard-core，可独立 cargo test）
+AiGuard/
+├── Cargo.toml               # workspace 根（core + src-tauri）
+├── core/                    # Rust 纯逻辑层（aiguard-core，可独立 cargo test）
 │   └── src/
-│       ├── detector.rs     # 敏感信息检测引擎（正则 + 语义校验）
-│       ├── vault.rs        # 原文 ↔ 占位符映射（会话隔离，仅内存）
-│       ├── stream.rs       # 流式还原状态机（前瞻缓冲）
-│       ├── audit.rs        # 7 大防护信号检测（纯检测层）
-│       └── probe.rs        # 主动核查计划与风险矩阵
-├── src-tauri/              # Tauri 2 应用层
+│       ├── detector.rs      # 敏感信息检测引擎（正则 + 语义校验）
+│       ├── vault.rs         # 原文 ↔ 占位符映射（会话隔离 + TTL，仅内存）
+│       ├── stream.rs        # 流式还原状态机（前瞻缓冲，处理占位符被拆 chunk）
+│       ├── sse.rs           # SSE 帧状态机（切帧 / 格式校验 / 缓冲上限）
+│       ├── audit.rs         # 7 大防护信号纯检测层（只读，不改写响应）
+│       ├── inspect.rs       # 主动核查计划、风险矩阵与审计报告
+│       ├── secure.rs        # 还原管道 + 审计上下文采集
+│       └── mem.rs           # 敏感内存主动擦除（销毁映射时覆写字节）
+├── src-tauri/               # Tauri 2 应用层
 │   └── src/
-│       ├── main.rs         # 入口：启动代理 + 注册命令 + 注册快捷键 + 定时更新检查
-│       ├── state.rs        # AppState、CA 生成、AI 域名表、黑/白名单、向导 / 快捷键 / 更新配置
-│       ├── proxy.rs        # hudsucker MITM 引擎（脱敏 / 拦截 / 还原）
-│       ├── process.rs      # 客户端进程识别（TCP 连接表 → PID → exe 路径）
-│       ├── store.rs        # SQLite 审计存储（不存原文）
-│       ├── proxy_config.rs # Windows 注册表系统代理 + PAC
-│       ├── i18n.rs         # 窗口外界面（托盘 / 通知）的中英文表，按 Language 取词
-│       └── commands.rs     # Tauri 命令 + 事件
-├── src/                    # React + TypeScript 前端（Vite）
-│   ├── App.tsx             # 全部界面：首页 / 请求 / 规则 / 防护 / 审计 / 设置 + 首次运行向导
-│   ├── i18n.ts             # 多语言内核（t / tb / 语言订阅）
-│   ├── i18n-dict-ui.ts     # 前端文案词典（键 = 中文原文）
-│   └── i18n-dict-backend.ts# 后端诊断文案词典（翻译 Err(String) 回到界面的中文）
-├── preview/                # 静态界面设计稿（与 src/ui.css 同源，双击即开）
-├── docs/                   # README 素材：logo 与运行界面截图
-└── scripts/                # 开发工具脚本
-    ├── i18n_extract.mjs    # 把 App.tsx 的中文文案改写为 t(...) 并维护 UI 词典
-    ├── i18n_rs_extract.mjs # 抽取 Rust 侧会进界面的中文，维护 BACKEND 词典
-    ├── i18n_merge.mjs      # 合并一批译文（自动排序、自动判断归属词典）
-    └── i18n_check.mjs      # 词典自检：键与调用点是否对齐、有无漏译
+│       ├── main.rs          # 入口：打开存储 → 构建状态 → 生成 CA → 启动代理 → 注册命令 / 快捷键
+│       ├── state.rs         # AppState、CA 生成、AI 域名表、黑/白名单、向导 / 快捷键 / 更新配置
+│       ├── proxy.rs         # hudsucker MITM 引擎（脱敏 / 拦截 / 还原）
+│       ├── transparent.rs   # hosts 模式透明拦截层（SNI 识别 → 动态签发 → 桥接本地代理）
+│       ├── hosts.rs         # hosts 文件标记块写入 / 移除（需管理员权限）
+│       ├── dns.rs           # 绕过系统解析器的 DNS 直查（hosts 模式配套）
+│       ├── process.rs       # 客户端进程识别（TCP 连接表 → PID → exe 路径）
+│       ├── proxy_config.rs  # Windows 注册表系统代理 + PAC 生成
+│       ├── security.rs      # 本机安全加固：调试器检测、CA 私钥 DPAPI 保护、端口占用诊断
+│       ├── store.rs         # SQLite 持久化：请求日志 / 审计事件 / kv 配置（不存原文）
+│       ├── link_check.rs    # 主动核查执行器（追踪标记注入 + 回显验证）
+│       ├── console.rs       # 外部命令输出解码（系统代码页 → UTF-8）
+│       ├── i18n.rs          # 窗口外界面（托盘 / 通知）的中英文表，按 Language 取词
+│       └── commands.rs      # Tauri 命令 + 事件
+├── src/                     # React + TypeScript 前端（Vite）
+│   ├── App.tsx              # 全部界面：首页 / 请求 / 规则 / 防护 / 审计 / 设置 + 首次运行向导
+│   ├── api.ts               # Tauri 命令封装（含浏览器预览下的 MOCK 数据源）
+│   ├── i18n.ts              # 多语言内核（t / tb / 语言订阅）
+│   ├── i18n-dict-ui.ts      # 前端文案词典（键 = 中文原文）
+│   ├── i18n-dict-backend.ts # 后端诊断文案词典（翻译 Err(String) 回到界面）
+│   ├── i18n-dict-runtime.ts # 运行期才产生的中文（拼接串、系统回传）
+│   └── ui.css               # 设计系统（自绘控件样式，与 preview/ 同源）
+├── preview/                 # 静态界面设计稿（与 src/ui.css 同源，双击即开）
+├── docs/                    # README 素材：logo、运行界面截图、i18n 审计记录
+└── scripts/                 # 开发工具脚本
+    ├── i18n_extract.mjs     # 把 App.tsx 的中文文案改写为 t(...) 并维护 UI 词典
+    ├── i18n_rs_extract.mjs  # 抽取 Rust 侧会进界面的中文，维护 BACKEND 词典
+    ├── i18n_merge.mjs       # 合并一批译文（自动排序、自动判断归属词典）
+    ├── i18n_check.mjs       # 词典自检：键与调用点是否对齐、有无漏译
+    ├── i18n_locale_check.mjs# 窗口标题与 <html lang> 同步自检
+    ├── i18n_e2e.mjs         # 真浏览器端到端扫描（14 个界面 + 原生属性）
+    └── rust_scan.mjs        # Rust 中文字面量扫描器（供上面几个脚本复用）
 ```
 
 ---
@@ -262,6 +294,63 @@ aiguard/
 
 ---
 
+## 🤝 贡献 / Contributing
+
+AiGuard 是一个**安全工具**，它欢迎的贡献不止于代码。以下任何一类都同样有价值：
+
+| 类型 | 说明 |
+|---|---|
+| 🐛 **缺陷报告** | 复现步骤 + 版本 + 系统环境，越具体越好 |
+| 💡 **功能建议** | 想解决的真实场景，比「加个按钮」更能帮助设计 |
+| 🧠 **思路与设计讨论** | 代理架构、流式还原、名单匹配的取舍——先讨论再写代码 |
+| 🔐 **安全设计** | 检测规则、防绕过思路、威胁建模、审计信号的新维度 |
+| 📖 **文档与翻译** | 中英文措辞、截图、使用指南的改进 |
+| 🔧 **代码贡献** | 新检测规则、性能优化、界面打磨 |
+
+动手之前请先读 **[CONTRIBUTING.md](./CONTRIBUTING.md)**；参与本项目即表示你同意遵守 **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)**。
+
+> [!WARNING]
+> **发现安全漏洞请不要开公开 Issue**，按 **[SECURITY.md](./SECURITY.md)** 的私下渠道报告。
+
+---
+
+## 💬 社区联系 / Community
+
+- **[GitHub Issues](https://github.com/Technicalflight/AiGuard/issues)** — 缺陷报告、功能建议、设计讨论的主要入口
+- **[GitHub Discussions](https://github.com/Technicalflight/AiGuard/discussions)** — 开放式提问与经验分享
+- **[Linux.Do](https://linux.do)** — 一个分享和讨论技术的社区
+
+---
+
+## 📦 开源支持 / Built on open source
+
+AiGuard 站在这些优秀开源项目之上：
+
+[Tauri](https://tauri.app) · [React](https://react.dev) · [Vite](https://vite.dev) · [TypeScript](https://www.typescriptlang.org) ·
+[hudsucker](https://github.com/omjadas/hudsucker) · [hyper](https://hyper.rs) · [tokio](https://tokio.rs) ·
+[rustls](https://github.com/rustls/rustls) · [rcgen](https://github.com/rustls/rcgen) · [rusqlite](https://github.com/rusqlite/rusqlite) ·
+[serde](https://serde.rs) · [regex](https://github.com/rust-lang/regex) 以及 Rust 生态的众多 crate。
+
+如果 AiGuard 用起来顺手，也欢迎去给这些上游项目点个 Star —— 它们同样值得。
+
+---
+
+## ☕ 赞助 / Sponsor
+
+如果 AiGuard 对你有帮助，欢迎请作者喝杯咖啡或可乐 ☕🥤——每一杯都是持续开发的动力。
+
+<p align="center">
+  <img src="docs/sponsor-alipay.png" width="250" alt="支付宝收款码"/>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/sponsor-wechat.png" width="250" alt="微信收款码"/>
+</p>
+<p align="center"><sub>左：支付宝 Alipay &nbsp;·&nbsp; 右：微信 WeChat Pay</sub></p>
+
+> [!WARNING]
+> **赞助前请务必阅读**：赞助是**完全自愿**的感谢行为。**赞助不会提高或加快任何功能、缺陷修复或其他工作的实现优先级**——所有开发均按路线图与社区需求推进，与是否赞助、赞助多少完全无关。赞助仅代表感谢，不构成任何商业授权、优先支持或其他额外承诺。
+
+---
+
 ## ⚠️ 免责声明
 
 - 本项目为**学习研究性质**的安全工具，与文中提及的任何 AI 服务商均无关联。
@@ -271,6 +360,16 @@ aiguard/
 
 ---
 
-## 📄 License
+## 许可证 / License
 
-[MIT](./LICENSE) © 2026 Technicalflight
+AiGuard is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**, available at <https://www.gnu.org/licenses/agpl-3.0.html> — see the [LICENSE](./LICENSE) file for the full text.
+
+Use of AiGuard for **commercial purposes is permitted**, subject to full compliance with the terms and conditions of the AGPL-3.0 license — including its network-use clause: if you modify AiGuard and offer it as a network service, you must make the complete corresponding source code available to the users of that service.
+
+Should you require a **commercial license** that provides an exemption from the AGPL-3.0 requirements (e.g. closed-source or internal deployment without the source-disclosure obligations), please open an issue at <https://github.com/Technicalflight/AiGuard/issues> to contact the author.
+
+---
+
+中文说明：本项目社区版采用 **AGPL-3.0** 许可证。你可以自由地使用、学习、修改和分发本项目（包括商业用途），但必须完整遵守 AGPL-3.0 全部条款——尤其是**网络服务条款**：修改后的版本若以网络服务形式提供给他人使用，必须向使用者提供完整的对应源代码。如需**豁免上述开源义务的商业授权**（如闭源部署、OEM 集成），请通过 [GitHub Issues](https://github.com/Technicalflight/AiGuard/issues) 联系作者洽谈。
+
+Copyright © 2026 Technicalflight

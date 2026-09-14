@@ -1,0 +1,97 @@
+name: 🐛 缺陷报告 / Bug report
+description: 报告一个可复现的问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你花时间报告问题。**请勿粘贴真实的身份证号、手机号、银行卡号、API Key 或他人的个人数据** ——
+        复现请使用你自己构造的假数据。
+
+        > 安全漏洞请**不要**在这里提交，按 [SECURITY.md](../blob/main/SECURITY.md) 私下报告。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索过现有 Issue，确认这不是重复报告
+          required: true
+        - label: 我正在使用最新发布的版本
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 问题描述
+      description: 发生了什么？你期望发生什么？
+      placeholder: 清晰、具体地描述现象与期望行为。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 尽可能最小化。如果问题与脱敏 / 还原有关，请附上脱敏前后的请求片段（用假数据）。
+      placeholder: |
+        1. 打开「设置」→ …
+        2. 开启守护后访问 …
+        3. 观察到 …
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: AiGuard 版本
+      description: 设置页底部、或「关于」处显示的版本号
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows 版本
+      placeholder: Windows 11 23H2 (22631.4169)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及模块
+      multiple: true
+      options:
+        - 代理接管（系统代理 / PAC / 证书）
+        - 请求侧脱敏
+        - 响应侧还原 / 流式
+        - 防护信号与审计
+        - 黑名单 / 白名单 / 进程识别
+        - 界面与交互
+        - 多语言（中文 / English）
+        - 全局快捷键
+        - 更新检查
+        - 构建 / 打包
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或截图
+      description: 相关日志、报错文本或界面截图。**请先自行检查一遍，确认不含真实敏感信息。**
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息
+      description: 其它可能有帮助的上下文（是否使用代理软件、杀毒软件、是否启用了 QUIC 等）
+    validations:
+      required: false

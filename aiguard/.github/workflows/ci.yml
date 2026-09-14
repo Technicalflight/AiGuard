@@ -1,0 +1,60 @@
+name: CI
+
+# 质量门：每次 push / PR 都跑前端构建、多语言自检与 Rust 全工作区测试，
+# 让类型错误与测试回归无法搭着某个 tag 直接进 Release。
+# 打包在 release.yml，端到端界面扫描（i18n:e2e）依赖真浏览器与 dev server，
+# 属本地可选验收，不放进 CI——放进来只会带来不稳定红灯，掩盖真实回归。
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: 前端构建与多语言自检
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: 类型检查 + 打包（tsc && vite build）
+        run: npm run build
+
+      - name: 词典自检（键与调用点是否对齐、有无漏译）
+        run: npm run i18n:check
+
+      - name: 窗口标题与 <html lang> 同步自检
+        run: npm run i18n:locale
+
+  rust:
+    name: Rust 全工作区测试
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # tauri-build 在编译期校验 frontendDist（../dist）存在；
+      # 空目录即可满足，真实前端产物由 frontend job 与 release 流程负责。
+      - name: 占位 dist（满足 tauri-build 的存在性校验）
+        run: New-Item -ItemType Directory -Force -Path dist
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+
+      # 必须跑整个工作区：core 与 src-tauri 都要覆盖，
+      # 只跑 -p aiguard-core 会漏掉代理 / 存储 / 命令层的回归。
+      - name: cargo test --workspace
+        run: cargo test --workspace
