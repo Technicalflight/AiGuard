@@ -60,9 +60,16 @@ jobs:
       - name: 编译测试二进制
         run: cargo test --workspace --no-run
 
-      # 失败时把测试名写成 Actions 注解。
+      # 失败时把「哪个用例挂了」和「为什么挂」都写成 Actions 注解。
       # 动机：Actions 日志要仓库写权限才能下载，注解任何人都能读——
       # 对没有权限的外部贡献者、以及对自动化排查都更友好。
+      #
+      # 2026-09-14 补记：旧版只 Select-String 'panicked at' 那一行，
+      # 于是注解里只剩「在 commands.rs:1214 挂了」，**看不出为什么挂**——
+      # panic 的正文（assert 文案 / Err 文案）在它的下一行。
+      # 那次排查被迫去猜是超时、是 PowerShell 失败、还是指纹算错。
+      # 现在把下一行一起带出来：注解必须自带结论，否则等于没有。
+      # 注意 GitHub 对单个 step 的注解条数有上限，所以只挑关键行，不做整段 dump。
       - name: 运行测试
         shell: pwsh
         run: |
@@ -70,9 +77,19 @@ jobs:
           $code = $LASTEXITCODE
           $out | ForEach-Object { Write-Host $_ }
           if ($code -ne 0) {
-            $out |
-              Select-String -Pattern 'FAILED|panicked at|^error(\[|:)' |
-              Select-Object -First 40 |
-              ForEach-Object { Write-Host "::error::$($_.Line.Trim())" }
+            for ($i = 0; $i -lt $out.Count; $i++) {
+              $line = "$($out[$i])".Trim()
+              if ($line -match '^test .+ \.\.\. FAILED') {
+                Write-Host "::error::$line"
+              }
+              elseif ($line -match 'panicked at') {
+                Write-Host "::error::$line"
+                # panic 正文在下一行，必须一并带出
+                if ($i + 1 -lt $out.Count) {
+                  $next = "$($out[$i + 1])".Trim()
+                  if ($next) { Write-Host "::error::$next" }
+                }
+              }
+            }
             exit $code
           }
