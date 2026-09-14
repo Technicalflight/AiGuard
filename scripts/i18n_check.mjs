@@ -60,6 +60,20 @@ const runtimeDict = readDict("src/i18n-dict-runtime.ts");
 const FRONTEND_FILES = ["src/App.tsx", "src/api.ts", "src/i18n.ts"];
 const used = new Set();
 
+/**
+ * `t()` / `tf()` 的实参必须是**字面量**。
+ *
+ * 为什么单独查这个：`t(key)` 是精确查表，查不到就回退中文。若实参是个变量
+ * （比如把后端的 `"mask"` 当 key 传进去），查表必然落空 —— 而回退结果是
+ * **中文原文**，也就是说界面上会原样显示 `mask` / `partial` 这种代号。
+ *
+ * ⚠ 这类缺陷 **e2e 扫描抓不到**：那个扫描找的是「残留中文」，而漏查表渲染出来的是
+ * 英文/代号文本，跟正常的英文界面长得一模一样。所以只能在这里静态拦。
+ * 后端刚发生过同类的真 bug（`tr(lang, cert_state)`，代号被当 key，中英双语都错），
+ * 见 `i18n.rs` 的 `cert_state_key`。
+ */
+const tNonLiteral = [];
+
 for (const file of FRONTEND_FILES) {
   const src = fs.readFileSync(file, "utf8");
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -71,6 +85,14 @@ for (const file of FRONTEND_FILES) {
     ) {
       const a0 = n.arguments[0];
       if (a0 && (ts.isStringLiteral(a0) || ts.isNoSubstitutionTemplateLiteral(a0))) used.add(a0.text);
+      else {
+        const { line } = sf.getLineAndCharacterOfPosition(n.getStart(sf));
+        tNonLiteral.push({
+          file,
+          line: line + 1,
+          text: `${n.expression.text}(${a0 ? a0.getText(sf).slice(0, 50) : "<无实参>"})`,
+        });
+      }
     }
     ts.forEachChild(n, walk);
   })(sf);
@@ -570,6 +592,13 @@ if (trKeyIssues.length) {
   }
 }
 
+if (tNonLiteral.length) {
+  problems.push(
+    `t() / tf() 的实参不是字面量（${tNonLiteral.length} 处）——查表必然落空，界面上会原样显示代号文本（e2e 扫描抓不到，因为那不是中文）：`
+  );
+  for (const t of tNonLiteral) problems.push(`    ~ ${t.file}:${t.line}  ${t.text}`);
+}
+
 const rustMissing = [...rustStrings].filter((k) => !backendDict.has(k));
 if (rustMissing.length) {
   const msg = `Rust 侧文案未进 BACKEND_DICT（${rustMissing.length}/${rustStrings.size} 条，日志类属正常）`;
@@ -609,6 +638,7 @@ console.log(`「数字后碎片」需带空格: ${spacedFrags.size} 条（有问
 console.log(
   `i18n TABLE: ${tableKeys.size} 条（tr() 字面量键 ${trLiteralCount} 处，未命中 ${trKeyIssues.length} 处）`
 );
+console.log(`t()/tf() 实参非字面量: ${tNonLiteral.length} 处（应为 0）`);
 for (const w of warnings) console.log(`\n[警告] ${w}`);
 for (const p of problems) console.log(`\n[错误] ${p}`);
 

@@ -121,13 +121,35 @@ async function scan(label) {
   });
   if (opened) await page.waitForTimeout(300);
 
-  const lines = await page.evaluate(() =>
-    document.body.innerText.split("\n").map((s) => s.trim()).filter(Boolean)
-  );
-  const bad = lines.filter((l) => HAN.test(l) && !ALLOW.some((re) => re.test(l)));
+  const { lines, attrs } = await page.evaluate(() => {
+    const body = document.body.innerText.split("\n").map((s) => s.trim()).filter(Boolean);
+    // ⚠ `innerText` **完全不含** title / placeholder / aria-label / alt：
+    // 悬停提示、输入框占位符、无障碍标签都是用户可见（或辅助技术可读）的文案，
+    // 但它们不进 innerText。只扫 innerText 会把这一整类漏掉——
+    // 而它们恰恰最不容易被肉眼发现（要悬停才看得见）。
+    const ATTRS = ["title", "placeholder", "aria-label", "alt"];
+    const seen = new Set();
+    const out = [];
+    for (const el of document.querySelectorAll("[title],[placeholder],[aria-label],[alt]")) {
+      for (const a of ATTRS) {
+        const v = el.getAttribute(a);
+        if (v && v.trim()) {
+          const key = a + "|" + v.trim();
+          if (!seen.has(key)) {
+            seen.add(key);
+            out.push(`${a}="${v.trim()}"`);
+          }
+        }
+      }
+    }
+    return { lines: body, attrs: out };
+  });
+
+  const all = [...lines, ...attrs];
+  const bad = all.filter((l) => HAN.test(l) && !ALLOW.some((re) => re.test(l)));
   totalHits += bad.length;
   console.log(
-    `${bad.length ? "✗" : "✓"} ${label}  （${lines.length} 行，展开 ${opened} 个折叠块，命中 ${bad.length}）`
+    `${bad.length ? "✗" : "✓"} ${label}  （${lines.length} 行 + ${attrs.length} 个属性，展开 ${opened} 个折叠块，命中 ${bad.length}）`
   );
   for (const b of bad.slice(0, 10)) console.log(`      ${JSON.stringify(b.slice(0, 150))}`);
   if (bad.length > 10) console.log(`      ... 另有 ${bad.length - 10} 行`);
