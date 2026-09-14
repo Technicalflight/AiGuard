@@ -167,19 +167,28 @@ jobs:
       - name: 编译检查（含测试目标，失败自描述）
         shell: bash
         run: |
-          set -o pipefail
-          if ! cargo check --workspace --all-targets 2>&1 | tee /tmp/check.log; then
-            # 编译错误也要写成注解：日志要仓库写权限，注解任何人都能读
-            awk '/^error/{print "::error::"$0} /^warning: unused/{print "::error::"$0} /^ +--> /{print "::error::"$0}' \
-              /tmp/check.log | head -40
-            exit 1
+          cargo check --workspace --all-targets 2>&1 | tee /tmp/check.log
+          code=${PIPESTATUS[0]}
+          echo "cargo check 退出码: $code"
+          if [ "$code" -ne 0 ]; then
+            # 注解任何人都能读；Actions 日志要仓库写权限（外部贡献者拿不到）
+            grep -nE "^error|^warning: unused|^\s+--> " /tmp/check.log |
+              head -30 | while IFS= read -r l; do echo "::error::$l"; done
+            # 兜底：一条都没匹配上（错误形态变了）就把末尾日志带出来，绝不让失败无法诊断
+            if ! grep -qE "^error" /tmp/check.log; then
+              echo "::error::（未匹配到 ^error 行，附日志末尾）"
+              tail -12 /tmp/check.log | while IFS= read -r l; do echo "::error::$l"; done
+            fi
+            exit "$code"
           fi
 
       - name: 运行测试（失败自描述）
         shell: bash
         run: |
-          set -o pipefail
-          if ! cargo test --workspace --no-fail-fast 2>&1 | tee /tmp/test.log; then
+          cargo test --workspace --no-fail-fast 2>&1 | tee /tmp/test.log
+          code=${PIPESTATUS[0]}
+          echo "cargo test 退出码: $code"
+          if [ "$code" -ne 0 ]; then
             # 注解必须自带结论：只报「哪个用例挂了」不够，panic 的正文在下一行
             awk '
               /^test .+ \.\.\. FAILED/ { print "::error::" $0; next }
@@ -191,5 +200,5 @@ jobs:
                 }
               }
             ' /tmp/test.log | head -40
-            exit 1
+            exit "$code"
           fi

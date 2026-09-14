@@ -153,7 +153,7 @@ pub fn pid_listening_on(port: u16) -> Option<u32> {
         // TCP_LISTEN == 0x0A
         let hit = parse_proc_net_tcp(&text)
             .into_iter()
-            .find(|row| row.state == 0x0A && row.local.1 == port);
+            .find(|row| row.state == 0x0A && row.local_port == port);
         if let Some(row) = hit {
             if let Some(pid) = pid_owning_socket(row.inode) {
                 return Some(pid);
@@ -202,9 +202,9 @@ pub fn resolve_client_exe(client_addr: SocketAddr) -> Option<String> {
         let Ok(text) = std::fs::read_to_string(table) else {
             continue;
         };
-        let hit = parse_proc_net_tcp(&text)
-            .into_iter()
-            .find(|row| row.local == (v4, client_addr.port()));
+        let hit = parse_proc_net_tcp(&text).into_iter().find(|row| {
+            row.local_ip == Some(v4) && row.local_port == client_addr.port()
+        });
         if let Some(row) = hit {
             return pid_owning_socket(row.inode).and_then(exe_path_of_pid);
         }

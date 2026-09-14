@@ -62,32 +62,75 @@ pub fn debugger_attached() -> bool {
 
 /// macOS：`sysctl(KERN_PROC_PID)` 取自身 `kinfo_proc`，看 `p_flag` 的 `P_TRACED` 位。
 ///
-/// 调用失败（权限、接口变化）一律降级为「未检测到」——加固检查的通用原则是
-/// 「失败降级为未知、只告警不阻断」。
+/// ⚠ `libc` **不导出** `kinfo_proc` 与 `P_TRACED`（只导出 `sysctl` 与那三个 mib 常量），
+/// 所以这里按 darwin 64 位 ABI 手写布局：
+/// - `kinfo_proc` 前 32 字节是 `extern_proc` 的三个指针（`p_un` 16 + `p_vmspace` 8 +
+///   `p_sigacts` 8），**`p_flag` 落在偏移 32**（4 字节，本机字节序）；
+/// - `P_TRACED = 0x0000_0800`（xnu `bsd/sys/proc.h`）。
+///
+/// 这是**检测与告警**用途，且全部失败分支都降级为「未检测到」——加固检查的通用原则
+/// 是「失败降级、只告警不阻断」，也把未来 ABI 变动的影响锁死在「少报一次」上。
 #[cfg(target_os = "macos")]
 pub fn debugger_attached() -> bool {
-    let mut info: libc::kinfo_proc = unsafe { std::mem::zeroed() };
-    let mut size = std::mem::size_of::<libc::kinfo_proc>() as libc::size_t;
+    const P_FLAG_OFFSET: usize = 32;
+    const P_TRACED: u32 = 0x0000_0800;
+
+    let mut size: libc::size_t = 0;
     let mut mib = [
         libc::CTL_KERN,
         libc::KERN_PROC,
         libc::KERN_PROC_PID,
         std::process::id() as libc::c_int,
     ];
+    // 第一次调用：只问需要多大的缓冲区
     let rc = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
             mib.len() as libc::c_uint,
-            std::ptr::addr_of_mut!(info).cast::<libc::c_void>(),
+            std::ptr::null_mut(),
             &mut size,
             std::ptr::null_mut(),
             0,
         )
     };
-    if rc != 0 || size == 0 {
+    if rc != 0 || size < P_FLAG_OFFSET + 4 {
         return false;
     }
-    info.kp_proc.p_flag & libc::P_TRACED != 0
+    let mut buf = vec![0u8; size];
+    let rc = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            buf.as_mut_ptr().cast::<libc::c_void>(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 {
+        return false;
+    }
+    match p_flag_from_kinfo_proc(&buf) {
+        Some(flag) => flag & P_TRACED != 0,
+        None => false,
+    }
+}
+
+/// 从 `kinfo_proc` 原始字节里取 `p_flag`（偏移 32，本机字节序）；越界返回 `None`。
+///
+/// 独立成纯函数是为了能在 macOS 上单测这个偏移读取，而不是把它揉在 sysctl 里。
+#[cfg(target_os = "macos")]
+fn p_flag_from_kinfo_proc(buf: &[u8]) -> Option<u32> {
+    const P_FLAG_OFFSET: usize = 32;
+    if buf.len() < P_FLAG_OFFSET + 4 {
+        return None;
+    }
+    Some(u32::from_ne_bytes([
+        buf[P_FLAG_OFFSET],
+        buf[P_FLAG_OFFSET + 1],
+        buf[P_FLAG_OFFSET + 2],
+        buf[P_FLAG_OFFSET + 3],
+    ]))
 }
 
 /// 其它平台（本项目未发布）：不做额外检测。

@@ -1035,34 +1035,41 @@ pub fn install_ca(app: tauri::AppHandle) -> Result<String, String> {
     {
         // 1) 首选 NSS 用户库：Chromium / Chrome / Edge 在 Linux 上读的就是它，
         //    而且不需要管理员权限（与 Windows 的 certutil -user 同层级）。
+        //    HOME 定位不到时跳过这条路，直接走系统信任库。
+        let mut nss_done = false;
         if linux_nss_available() {
-            let db = linux_nss_db();
-            linux_nss_ensure_db(&db)?;
-            let (ok, stdout, stderr) = run_cmd(
-                "certutil",
-                &[
-                    "-d",
-                    &db,
-                    "-A",
-                    "-t",
-                    "C,,",
-                    "-n",
-                    LINUX_NSS_NICKNAME,
-                    "-i",
-                    &cert_path.display().to_string(),
-                ],
-            )?;
-            if ok {
-                return Ok(format!(
-                    "根证书已安装到当前用户证书库: {}",
-                    cert_path.display()
-                ));
+            if let Some(db) = linux_nss_db() {
+                linux_nss_ensure_db(&db)?;
+                let (ok, stdout, stderr) = run_cmd(
+                    "certutil",
+                    &[
+                        "-d",
+                        &db,
+                        "-A",
+                        "-t",
+                        "C,,",
+                        "-n",
+                        LINUX_NSS_NICKNAME,
+                        "-i",
+                        &cert_path.display().to_string(),
+                    ],
+                )?;
+                if ok {
+                    return Ok(format!(
+                        "根证书已安装到当前用户证书库: {}",
+                        cert_path.display()
+                    ));
+                }
+                log::warn!(
+                    "NSS 用户库安装失败，尝试系统信任库: {}",
+                    brief(&stderr, &stdout)
+                );
+                nss_done = true;
+            } else {
+                log::info!("无法定位 HOME 目录，跳过 NSS 用户库，改走系统信任库");
             }
-            log::warn!(
-                "NSS 用户库安装失败，尝试系统信任库: {}",
-                brief(&stderr, &stdout)
-            );
         }
+        let _ = nss_done;
         // 2) 退回系统信任库（需要管理员授权）：这是系统与绝大多数工具真正读的地方。
         linux_install_system_ca(&cert_path)?;
         Ok(format!(
