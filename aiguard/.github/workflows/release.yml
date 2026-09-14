@@ -54,6 +54,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
 
       # Tauri 在 Linux 上依赖发行版的 WebKitGTK / 托盘库；缺一个就编不过。
+      # libfuse2 是 AppImage 打包工具（linuxdeploy）运行所需。
       - name: 安装 Linux 系统依赖
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -62,7 +63,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            libfuse2
 
       - name: 安装前端依赖
         run: npm ci
