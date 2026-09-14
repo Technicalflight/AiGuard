@@ -347,13 +347,21 @@ fn keychain_load(account: &str) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    let pem = crate::console::decode_console(&out.stdout)
-        .trim_end_matches(['\n', '\r'])
-        .to_string();
-    if pem.is_empty() {
+    // ⚠ `security -w` 只在输出末尾**追加一层**换行；这里只能剥这一层，
+    // 不能用 trim_end_matches 全剥——存进去的 PEM 自带结尾换行，全剥会
+    // 破坏往返保真（首个 macOS CI 上 test_keychain_roundtrip 就是这么红的：
+    // 断言 left != right，left 少一个 \n）。
+    let mut raw = crate::console::decode_console(&out.stdout);
+    if raw.ends_with('\n') {
+        raw.pop();
+        if raw.ends_with('\r') {
+            raw.pop();
+        }
+    }
+    if raw.is_empty() {
         None
     } else {
-        Some(pem)
+        Some(raw)
     }
 }
 
