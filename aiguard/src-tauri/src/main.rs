@@ -198,6 +198,28 @@ pub(crate) fn refresh_tray(app: &tauri::AppHandle) {
     let _ = tray.set_tooltip(Some(tray_tooltip(state.inner())));
 }
 
+/// 把主窗口标题同步成当前语言的应用名。
+///
+/// ⚠ 窗口标题是**独立于前端渲染**的原生元素：`tauri.conf.json` 里的 `title` 只在
+/// 窗口创建时生效一次，之后切语言不会自己变。它和托盘 / 系统通知同属「窗口外」界面，
+/// 必须显式同步，否则会出现「托盘已是 AI Guard、任务栏悬停还是 AI 安全卫士」的割裂。
+///
+/// 本窗口是 `decorations: false`（无原生标题栏），所以标题只在**任务栏悬停**与
+/// **Alt+Tab 切换器**里可见——仍然属于用户看得到的信息面。
+pub(crate) fn sync_window_title(app: &tauri::AppHandle) {
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let want = i18n::tr(app.state::<Arc<AppState>>().inner().language(), "app.name");
+    // 只在真的变化时才 set_title：Windows 上每次都是一次 WM_SETTEXT，没必要无脑重设。
+    if matches!(win.title(), Ok(cur) if cur == want) {
+        return;
+    }
+    if let Err(e) = win.set_title(&want) {
+        log::debug!("窗口标题同步失败: {}", state::safe_err(&e));
+    }
+}
+
 /// 托盘状态签名：只有它变化了才重建菜单（避免 2 秒一次把展开的菜单关掉）。
 /// 语言也在签名里——否则切语言后菜单会一直停在旧语言。
 fn tray_signature(state: &Arc<AppState>) -> String {
@@ -591,6 +613,10 @@ fn main() {
 
             // 挂载全局状态
             app.manage(app_state.clone());
+
+            // 窗口标题按持久化语言初始化。
+            // tauri.conf.json 里的 title 只覆盖默认语言，用户上次选英文的话这里要纠正过来。
+            sync_window_title(app.handle());
 
             // 全局快捷键：按持久化配置注册（默认开启）。
             // 注册失败（键位被别的程序占用）只告警：设置页会显示"未生效"，

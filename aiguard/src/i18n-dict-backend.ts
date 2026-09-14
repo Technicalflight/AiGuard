@@ -40,6 +40,7 @@ export const BACKEND_DICT: Record<string, string> = {
   "持久化规则加载失败，使用内置默认规则: {}": "Failed to load the saved rules; using the built-in defaults: {}",
   "窗口外切换守护：{}": "Toggled the guard from outside the window: {}",
   "窗口外切换守护失败: {}": "Failed to toggle the guard from outside the window: {}",
+  "窗口标题同步失败: {}": "Failed to sync the window title: {}",
   "存在": "present",
   "存在带写权限的宽泛主体 {}{}；当前访问项：{}": "A broad principal with write access exists {}{}; current access entry: {}",
   "代理客户端进程（首次出现）: {}": "Proxy client process (first seen): {}",

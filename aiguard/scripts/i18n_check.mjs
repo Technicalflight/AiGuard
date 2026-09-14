@@ -45,11 +45,13 @@ const runtimeDict = readDict("src/i18n-dict-runtime.ts");
 // ─────────── 1. 前端调用点 ───────────
 //
 // 必须扫**所有**含 t() 调用的前端文件，不能只看 App.tsx：
-// `src/api.ts` 的 pickPath 要把标题/过滤器名交给系统原生文件对话框
-// （不经过 React 渲染），那几处 t() 是唯一的翻译点。
+//  - `src/api.ts` 的 pickPath 要把标题/过滤器名交给系统原生文件对话框
+//    （不经过 React 渲染），那几处 t() 是唯一的翻译点。
+//  - `src/i18n.ts` 的 syncDocumentLocale 要设置 `document.title`，
+//    这也是一个不经过 React 渲染的翻译点（浏览器标签页标题）。
 // 漏扫会让这些键被误判成「没有调用点的孤儿键」。
 
-const FRONTEND_FILES = ["src/App.tsx", "src/api.ts"];
+const FRONTEND_FILES = ["src/App.tsx", "src/api.ts", "src/i18n.ts"];
 const used = new Set();
 
 for (const file of FRONTEND_FILES) {

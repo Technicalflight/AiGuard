@@ -51,12 +51,31 @@ export function subscribeLang(fn: () => void): () => void {
 }
 
 /**
+ * 把当前语言同步到**两个浏览器原生属性**。
+ *
+ * `<title>` 与 `<html lang>` 不在 React 的渲染范围内，所以不会随组件重渲染而更新：
+ *  - 标题：浏览器预览模式下显示在标签页上；
+ *  - `lang`：决定字体回退、断词规则，屏幕阅读器也靠它选发音，`:lang()` 选择器同样依赖它。
+ *
+ * ⚠ 必须在 `applyLang` 的**提前返回之前**调用。首次加载时后端返回的语言可能正好
+ * 等于默认值（zh），提前返回会让这两个属性永远停在 `index.html` 里的硬编码值。
+ */
+function syncDocumentLocale(): void {
+  if (typeof document === "undefined") return; // 非浏览器环境（自检脚本/SSR）直接跳过
+  document.title = t("AI 安全卫士");
+  document.documentElement.lang = current === "en" ? "en" : "zh-CN";
+}
+
+/**
  * 只改本地状态并通知订阅者；落盘由调用方（命令层）负责。
  * 通知是同步的，因此切换语言必须在 React 事件里调用。
  */
 export function applyLang(next: Lang): void {
-  if (next === current) return;
+  const changed = next !== current;
   current = next;
+  // 语言没变也要跑：首次加载（后端回传的语言 === 默认值）走的就是这条路。
+  syncDocumentLocale();
+  if (!changed) return;
   for (const fn of [...listeners]) fn();
 }
 
