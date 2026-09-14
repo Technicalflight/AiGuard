@@ -19,13 +19,14 @@ tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
-# hudsucker 0.20 工作在 hyper 0.14 上（经 hudsucker::hyper 重导出），
-# rustls 0.21 / http 0.2 类型均通过 hudsucker 的重导出使用，勿直接引入 1.x/0.23 系
-hudsucker = "0.20"
+# hudsucker 0.21 仍工作在 hyper 0.14 上（经 hudsucker::hyper 重导出），
+# rustls 0.21 / http 0.2 类型均通过 hudsucker 的重导出使用，勿直接引入 1.x/0.23 系。
+# 注意 0.22 起整体换到 hyper 1.x / http 1.x / tokio-rustls 0.26，属换生态，已在 dependabot.yml 里屏蔽。
+hudsucker = "0.21"
 rcgen = "0.14"
 base64 = "0.23"
 sha1 = "0.11"
-# hosts 模式的透明 TLS 终结（版本须与 hudsucker 0.20 内部的 tokio-rustls 0.24 一致）
+# hosts 模式的透明 TLS 终结（版本须与 hudsucker 0.21 内部的 tokio-rustls 0.24 一致）
 tokio-rustls = "0.24"
 # hosts 模式：自定义上游 DNS 解析（绕过 hosts 自环）。
 # 自定义方式为实现 tower_service::Service<Name>（hyper 0.14 的 Resolve 是 sealed 别名）
@@ -36,7 +37,7 @@ bytes = "1"
 futures = "0.3"
 async-trait = "0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
-winreg = "0.55"
+winreg = "0.56"
 windows-sys = { version = "0.61", features = [
     "Win32_Networking_WinInet",
     "Win32_NetworkManagement_IpHelper",
