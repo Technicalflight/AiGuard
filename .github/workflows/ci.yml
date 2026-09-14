@@ -55,6 +55,26 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
 
+      # 预热 Windows PowerShell。
+      #
+      # 背景：commands::ca_trust_tests::test_query_trust_counters_channel 会真起一次
+      # powershell.exe 去枚举注册表，而 query_trust_counters 内部有 **20s 超时**
+      # （那是生产侧的 UX 边界：绝不让一个卡死的 PowerShell 把界面拖住）。
+      # 在冷启动的 windows-latest 上，第一次拉起 powershell.exe 偶尔会超过 20s，
+      # 于是这条用例随机变红，看起来像「检测通道坏了」，其实只是环境冷。
+      #
+      # 判据（不是猜的）：48cc835 那次 CI 红、紧接着的 0c74768 绿，
+      # 而这两次的 Rust 源码与 Cargo.lock **完全一致**（`git diff` 只差本文件），
+      # 本机连跑稳定通过 —— 同一份二进制两种结果，说明是用例随环境抖动。
+      #
+      # 做法：先单独把 powershell.exe 拉起来一次，把冷启动成本从被测路径里挪走。
+      # 注意必须用 powershell.exe（Windows PowerShell 5.1），不是 pwsh ——
+      # 被测代码拉起的就是 5.1，预热 pwsh 不起作用。
+      # 断言本身**不放宽**：通道真坏时（指纹算错 / 解码失败 / PS 报错）照样立刻失败。
+      - name: 预热 Windows PowerShell（避免冷启动打爆 20s 检测超时）
+        shell: cmd
+        run: powershell.exe -NoProfile -NonInteractive -Command "Write-Output warm"
+
       # 编译与运行分成两步：编译失败和测试失败在步骤名上就能区分开，
       # 不必去猜「到底是编不过还是测不过」。
       - name: 编译测试二进制
