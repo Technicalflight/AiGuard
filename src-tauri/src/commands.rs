@@ -2087,6 +2087,19 @@ mod shortcut_tests {
         };
         assert!(dup.normalized().is_err(), "两个动作撞键必须被拒绝");
 
+        // 修饰键书写顺序不同，但物理键位相同 → 同样算撞键。
+        // 这正是「比较用规范序、输出按用户输入序」这个设计的用途：
+        // 若直接比字符串，"Alt+Ctrl+G" 会溜过检查，两个动作绑到同一个热键上。
+        let reordered = ShortcutConfig {
+            enabled: true,
+            toggle_guard: "Ctrl+Alt+G".to_string(),
+            panic: "Alt+Ctrl+G".to_string(),
+        };
+        assert!(
+            reordered.normalized().is_err(),
+            "修饰键顺序不同但键位相同，也必须被拒绝"
+        );
+
         let d = ShortcutConfig::default();
         assert!(d.enabled);
         assert_eq!(d.toggle_guard, DEFAULT_SHORTCUT_TOGGLE);
