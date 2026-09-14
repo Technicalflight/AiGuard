@@ -53,6 +53,19 @@ const HAS_CJK =
 | 4 | 跨进程命名漂移 | `i18n.rs` 的 `SIGNAL_EN` 与前端词典不一致，且措辞违反命名规范 | 对齐 `core/src/audit.rs` 的 `SIGNAL_CATALOG`，自检新增对账节 |
 | 5 | 信息面不在 React 渲染范围内 | 原生窗口标题、`document.title`、`<html lang>` 永远停在硬编码值 | `sync_window_title()` + `syncDocumentLocale()`；**必须在 `applyLang` 提前返回之前调用** |
 | 6 | 渲染处漏包 `tb()` + 中文标点盲区 | 词典 100% 有译文、构建全绿，只有切英文肉眼才看得见（共出现 10 次） | 补 `tb()`；扩 CJK 正则；新增自检规则 1c / 1d |
+| 7 | **领域代号被当成文案 key** | 应急切断通知里显示「根证书：all」/「root certificate: partial」，**中英双语都错** | 展示层新增 `cert_state_key()` 做 代号→key 映射；新增 2 条跨文件测试 + 自检规则 2c |
+
+第 7 类的细节：`PanicReport::cert_state` 是**稳定代号**（`all` / `partial` / `none` /
+`absent`，字段注释写明了），但 `panic_notify` 直接 `tr(lang, cert_state)` 把它当 key 查表。
+`tr` 查不到时按约定**原样返回 key 本身**——于是代号被原样显示出来。
+
+它长期没被发现的原因是**测试断言了一个不存在的契约**：`test_panic_notify_shapes`
+传的是 `"cert.partial"`，而生产代码永远传 `"partial"`。测试全绿，路径全遮。
+
+> 教训：测试用的**输入值必须来自真实生产路径**。用「看起来对」的构造值去测，
+> 测的是想象中的契约，不是真实契约。宁可让测试调用生产函数取输入（本项目的做法：
+> `test_every_produced_cert_state_has_a_label` 直接调 `commands::cert_state_of`），
+> 也不要手写一个「应该是这样」的字符串。
 
 第 5 类的细节值得单独记一笔：`applyLang` 里 `if (next === current) return;` 会**吃掉首次加载
 这条路径**（后端回传的语言正好等于默认值 zh），导致 `document.title` / `<html lang>` 永远不更新。
@@ -64,9 +77,10 @@ const HAS_CJK =
 
 ```bash
 npm run i18n:extract   # ① 机械包装：把中文字面量包成 t("...")，抽取/合并词典
-npm run i18n:check     # ② 静态自检：4 类规则，秒级
+npm run i18n:check     # ② 静态自检：5 类规则，秒级
 npm run i18n:locale    # ③a 原生属性：document.title / <html lang>（stub DOM）
 npm run i18n:e2e       # ③b 端到端：真浏览器逐界面扫描（需 dev server 在跑）
+cargo test --workspace # ③c 托盘 / 通知（不经 React，e2e 扫不到）
 ```
 
 ### ① 抽取器 `scripts/i18n_extract.mjs`
@@ -82,6 +96,7 @@ npm run i18n:e2e       # ③b 端到端：真浏览器逐界面扫描（需 dev 
 - **孤儿键** —— 词典里有、但没有调用点（通常是漏包 `t()` 的信号）
 - **1c 未包中文** —— 前端文件里未包 `t()/tf()/tb()` 的中文字面量（含标点）
 - **1d 后端中文字段裸渲染** —— 见下
+- **2c `tr()` 键名拼写** —— 见下
 
 1d 的判据是**数据驱动**的：`src/api.ts` 的 MOCK 就是「后端产出的样本」，所以
 「MOCK 里值含中文的字段名」== 「运行时可能带中文的字段名」。把这些字段在 `App.tsx`
@@ -90,6 +105,19 @@ npm run i18n:e2e       # ③b 端到端：真浏览器逐界面扫描（需 dev 
 1c 只能查字面量，1d 专门查「词典里 100% 有译文、调用点全绿、构建全绿，只有切英文
 肉眼才看得见」那一类。精度靠三个排除函数（表单绑定 / 条件判断 / 方法接收者）
 加 `RAW_FIELD_ALLOW` 白名单压到零误报。
+
+2c 把每个 `tr(...)` 调用**实参里的字面量键**抓出来对 `TABLE` 点名。
+`tr` 查不到键会原样返回键名，所以**拼错一个键不会有任何报错**——托盘菜单里
+直接显示 `tray.shwo`，而托盘不经过 React、e2e 扫描也扫不到它，只有真去右键点
+托盘才看得见。用括号配平取整段实参（而非正则 `tr("...")`），以覆盖
+`tr(if enabled { "tray.status.on" } else { "tray.status.off" })` 这种三元形式。
+
+> ⚠ 提取 `TABLE` 的键时要用 `/\(\s*"/` 而不是 `/\("/`：较长的条目被格式化成多行，
+> 键名单独占一行（`notify.panic.body` 等），紧跟 `(` 的写法会漏掉它们，
+> 反过来产生「键明明在表里却报缺失」的误报。实测漏 3 条。
+
+**2c 的精度边界**：动态拼出来的键（如 `tr(&format!("cert.{}", code))`）抓不到。
+那类靠 Rust 侧的单测兜——见根因 7 的 `test_every_produced_cert_state_has_a_label`。
 
 ### ③a 原生属性 `scripts/i18n_locale_check.mjs`
 
@@ -129,6 +157,16 @@ NODE_PATH=/path/to/node_modules npm run i18n:e2e
 # Playwright 自带浏览器版本对不上时：
 AIGUARD_CHROMIUM=/path/to/chrome npm run i18n:e2e
 ```
+
+### ③c 托盘 / 系统通知：e2e 结构上覆盖不到
+
+托盘菜单、托盘提示、桌面通知全部由 Rust 构建，**不经过 React**，也不出现在任何
+浏览器页面里——`i18n_e2e.mjs` 扫不到它们。这类只能靠 `src-tauri/src/i18n.rs` 的
+单测兜住（`tray_tip` / `tray_event_line` / `notify_text` / `panic_notify` 各有断言，
+中英双语都覆盖）。
+
+所以 `i18n.rs` 的测试不是「锦上添花」，它是这几块界面的**唯一防线**。改这些文案
+函数时不要因为「只是文案」就跳过断言。根因 7 正是靠补上这类测试才被锁死的。
 
 ## 四、有意不翻译的内容
 
