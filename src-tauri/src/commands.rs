@@ -975,7 +975,12 @@ pub fn set_proxy_mode(
     }
 }
 
-/// 安装根证书到当前用户信任存储（certutil -user 免 UAC）。
+/// 安装根证书到当前用户信任存储。
+///
+/// 平台分工（三者都**不需要管理员权限**，与 Windows 的 `certutil -user` 对齐）：
+/// - Windows → `certutil -user -addstore Root`
+/// - macOS   → `security add-trusted-cert -r trustRoot -k <login keychain>`
+/// - Linux   → NSS 用户库（`~/.pki/nssdb`，Chromium 系浏览器实际读的就是它）
 #[tauri::command]
 pub fn install_ca(app: tauri::AppHandle) -> Result<String, String> {
     let cert_path = ca_cert_path(&app)?;
@@ -1004,11 +1009,250 @@ pub fn install_ca(app: tauri::AppHandle) -> Result<String, String> {
             Err(format!("certutil 失败: {}", msg))
         }
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        let keychain = macos_login_keychain().ok_or_else(|| {
+            "无法定位登录钥匙串（读取 HOME 环境变量失败）".to_string()
+        })?;
+        let (ok, stdout, stderr) = run_cmd(
+            "/usr/bin/security",
+            &[
+                "add-trusted-cert",
+                "-r",
+                "trustRoot",
+                "-k",
+                &keychain,
+                &cert_path.display().to_string(),
+            ],
+        )?;
+        if ok {
+            Ok(format!("根证书已安装到当前用户钥匙串: {}", cert_path.display()))
+        } else {
+            Err(format!("security add-trusted-cert 失败: {}", brief(&stderr, &stdout)))
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // 1) 首选 NSS 用户库：Chromium / Chrome / Edge 在 Linux 上读的就是它，
+        //    而且不需要管理员权限（与 Windows 的 certutil -user 同层级）。
+        if linux_nss_available() {
+            let db = linux_nss_db();
+            linux_nss_ensure_db(&db)?;
+            let (ok, stdout, stderr) = run_cmd(
+                "certutil",
+                &[
+                    "-d",
+                    &db,
+                    "-A",
+                    "-t",
+                    "C,,",
+                    "-n",
+                    LINUX_NSS_NICKNAME,
+                    "-i",
+                    &cert_path.display().to_string(),
+                ],
+            )?;
+            if ok {
+                return Ok(format!(
+                    "根证书已安装到当前用户证书库: {}",
+                    cert_path.display()
+                ));
+            }
+            log::warn!(
+                "NSS 用户库安装失败，尝试系统信任库: {}",
+                brief(&stderr, &stdout)
+            );
+        }
+        // 2) 退回系统信任库（需要管理员授权）：这是系统与绝大多数工具真正读的地方。
+        linux_install_system_ca(&cert_path)?;
+        Ok(format!(
+            "根证书已安装到系统信任库: {}",
+            cert_path.display()
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = cert_path;
         Err("当前平台尚未实现一键安装，请手动信任 ca.cer".to_string())
     }
+}
+
+// ─────────────── unix 侧公共小工具（macOS / Linux 共用） ───────────────
+
+/// 跑一条外部命令，返回 `(是否成功, 已解码 stdout, 已解码 stderr)`。
+///
+/// 只有"启动不起来"才算 `Err`（命令不存在 / 权限不足），退出码非 0 是 `Ok(false, …)`——
+/// 调用方通常要对「失败原因」做判断（取消授权、缺少工具…），不能被当成异常吞掉。
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn run_cmd(program: &str, args: &[&str]) -> Result<(bool, String, String), String> {
+    let out = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|e| format!("无法执行 {}: {}", program, crate::state::safe_err(&e)))?;
+    let (stdout, stderr) = crate::console::decode_output(&out);
+    Ok((out.status.success(), stdout, stderr))
+}
+
+/// 取一条命令失败时的简短原因（优先 stderr，截断到 200 字）。
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn brief(stderr: &str, stdout: &str) -> String {
+    let src = if stderr.trim().is_empty() { stdout } else { stderr };
+    let msg: String = src.trim().chars().take(200).collect();
+    if msg.is_empty() {
+        "命令返回失败（未见错误详情）".to_string()
+    } else {
+        msg
+    }
+}
+
+/// 组装 osascript 的 `do shell script … with administrator privileges` 源文本。
+///
+/// 转义顺序不能错：先把 `\` 变成 `\\`，再把 `"` 变成 `\"`（反过来会把刚插入的
+/// 反斜杠又转义一遍）。抽成纯函数是为了能在开发机（Windows）上把这两个转义钉住——
+/// 写错的表现是提权命令被悄悄截断，而不是报错。
+#[cfg(any(target_os = "macos", test))]
+pub fn macos_admin_shell_source(cmd: &str) -> String {
+    let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("do shell script \"{escaped}\" with administrator privileges")
+}
+
+/// macOS 登录钥匙串路径。
+#[cfg(target_os = "macos")]
+fn macos_login_keychain() -> Option<String> {
+    std::env::var("HOME")
+        .ok()
+        .map(|home| format!("{}/Library/Keychains/login.keychain-db", home))
+}
+
+/// macOS 系统钥匙串路径（写入/删除需要管理员授权）。
+#[cfg(target_os = "macos")]
+const MACOS_SYSTEM_KEYCHAIN: &str = "/Library/Keychains/System.keychain";
+
+/// Linux NSS 用户库的服务名（Chrome / Chromium / Edge 读的就是这个库里的信任项）。
+#[cfg(target_os = "linux")]
+const LINUX_NSS_NICKNAME: &str = "AiGuard Local CA";
+
+/// Linux 系统信任库里的落地文件名。
+#[cfg(target_os = "linux")]
+const LINUX_SYSTEM_CA: &str = "/usr/local/share/ca-certificates/aiguard-ca.crt";
+
+/// Linux NSS 用户库地址（`sql:` 前缀是 certutil 的库类型标记）。
+#[cfg(target_os = "linux")]
+fn linux_nss_db() -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    if home.is_empty() {
+        return None;
+    }
+    Some(format!("sql:{}/.pki/nssdb", home))
+}
+
+/// 本机是否装了 `certutil`（来自 libnss3-tools）。没装就只能走系统信任库。
+#[cfg(target_os = "linux")]
+fn linux_nss_available() -> bool {
+    run_cmd("certutil", &["-H"]).is_ok()
+}
+
+/// 确保 NSS 用户库存在。
+///
+/// `--empty-password` 与浏览器首次自动创建该库的行为一致：这个库只表达
+/// 「信任哪些 CA」，不含任何用户私钥，因此空口令是浏览器生态的通行做法。
+#[cfg(target_os = "linux")]
+fn linux_nss_ensure_db(db: &str) -> Result<(), String> {
+    let path = db.strip_prefix("sql:").unwrap_or(db);
+    std::fs::create_dir_all(path)
+        .map_err(|e| format!("创建证书库目录失败: {}", crate::state::safe_err(&e)))?;
+    let _ = run_cmd("certutil", &["-d", db, "-N", "--empty-password"]);
+    Ok(())
+}
+
+/// Linux：以管理员身份跑一段 shell 脚本（脚本作为单个 argv 传入，不经过二次解析）。
+#[cfg(target_os = "linux")]
+fn linux_elevated_sh(body: &str) -> Result<(), String> {
+    match run_cmd("pkexec", &["/bin/sh", "-c", body]) {
+        Ok((true, _, _)) => return Ok(()),
+        Ok((_, stdout, stderr)) => {
+            let msg = brief(&stderr, &stdout);
+            if msg.contains("Not authorized") || msg.contains("dismissed") {
+                return Err("已取消管理员授权，未做任何修改".to_string());
+            }
+            log::warn!("pkexec 执行失败，回退 sudo -n: {}", msg);
+        }
+        Err(e) => log::info!("本机没有 pkexec（{}），改用 sudo -n", e),
+    }
+    // sudo 在 GUI 子进程里没有 TTY，只能 -n（已缓存凭据 / NOPASSWD 时可用）
+    let (ok, stdout, stderr) = run_cmd("sudo", &["-n", "/bin/sh", "-c", body]).map_err(|e| {
+        format!(
+            "既没有可用的 pkexec，也没有 sudo；请安装 polkit（pkexec）后重试。{}",
+            e
+        )
+    })?;
+    if ok {
+        return Ok(());
+    }
+    Err(format!(
+        "需要管理员权限（pkexec 与 sudo -n 均不可用）: {}",
+        brief(&stderr, &stdout)
+    ))
+}
+
+/// macOS：以管理员身份跑一段 shell 脚本（写临时文件后整体提权，避免引号地狱）。
+#[cfg(target_os = "macos")]
+fn macos_elevated_sh(tag: &str, body: &str) -> Result<(), String> {
+    let path = std::env::temp_dir().join(format!("aiguard_{}.sh", tag));
+    std::fs::write(&path, body).map_err(|e| format!("写入临时脚本失败: {}", e))?;
+    let cmd = format!("/bin/sh '{}'", path.display());
+    let (ok, stdout, stderr) =
+        run_cmd("/usr/bin/osascript", &["-e", &macos_admin_shell_source(&cmd)])?;
+    if ok {
+        return Ok(());
+    }
+    let msg = brief(&stderr, &stdout);
+    // 用户在授权框点「取消」时 osascript 报 -128；文案本地化不可靠，所以同时按关键字判
+    if msg.contains("-128") || msg.to_ascii_lowercase().contains("cancel") {
+        return Err("已取消管理员授权，未做任何修改".to_string());
+    }
+    Err(format!("提权执行失败: {}", msg))
+}
+
+/// 从一段可能含多张证书的文本里切出所有 PEM 块（纯函数，便于单测）。
+///
+/// macOS 的 `security find-certificate -a -p` 会把整个钥匙串里的证书一次性导出，
+/// 必须切块后逐个比对指纹，不能拿整段文本去匹配。
+#[cfg(any(target_os = "macos", test))]
+pub fn split_pem_certs(text: &str) -> Vec<String> {
+    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+    const END: &str = "-----END CERTIFICATE-----";
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(BEGIN) {
+        let after = &rest[start + BEGIN.len()..];
+        let Some(end) = after.find(END) else {
+            break;
+        };
+        out.push(format!("{}{}{}", BEGIN, &after[..end], END));
+        rest = &after[end + END.len()..];
+    }
+    out
+}
+
+/// 证书 PEM 的 SHA-1 指纹（大写 hex）。
+///
+/// Windows 的 `X509Certificate2.Thumbprint`、注册表子键名、macOS
+/// `security … -Z` 认的都是这个值，因此三平台共用一份实现。
+pub fn thumbprint_of_pem(pem: &str) -> Option<String> {
+    let b64: String = pem
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("-----"))
+        .collect();
+    use base64::Engine as _;
+    let der = base64::engine::general_purpose::STANDARD
+        .decode(b64.as_bytes())
+        .ok()?;
+    use sha1::{Digest as _, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(&der);
+    Some(hex::encode_upper(hasher.finalize()))
 }
 
 /// CA 证书状态。
@@ -1050,6 +1294,7 @@ pub struct CaTrustStatus {
 /// 而 Windows PowerShell 5.1 的命令行解析器不按预期处理 `\"`，多行脚本中的
 /// 中文 CN 比较会在这层悄悄失效（脚本跑通但匹配数为 0）。`-EncodedCommand`
 /// 是单个纯 ASCII Base64 参数，无引号无编码歧义。
+#[cfg(any(target_os = "windows", test))]
 fn ps_encode_command(script: &str) -> String {
     use base64::Engine as _;
     let utf16le: Vec<u8> = script
@@ -1068,6 +1313,7 @@ fn ps_encode_command(script: &str) -> String {
 /// `HKCU:\SOFTWARE\Microsoft\SystemCertificates\Root\Certificates`，**每个子键名
 /// 就是证书的 SHA-1 指纹**，与本应用 CA 文件算出的指纹直接比对。
 /// 指纹在 Rust 侧计算（SHA-1 of DER，与 Windows Thumbprint 同源同值）。
+#[cfg(target_os = "windows")]
 async fn query_trust_counters(cert_path: &std::path::Path) -> Result<(usize, usize, usize), String> {
     let expect = expect_thumbprint(cert_path)?;
     let script = format!(
@@ -1130,34 +1376,23 @@ Write-Output "TOTAL=$total""#,
     Ok((lm, cu, total))
 }
 
-/// 计算证书文件的 Windows 指纹（SHA-1 of DER，大写 hex，与
+/// 计算证书文件的指纹（SHA-1 of DER，大写 hex，与
 /// `X509Certificate2.Thumbprint` 及注册表子键名同值）。
 fn expect_thumbprint(cert_path: &std::path::Path) -> Result<String, String> {
     let pem = std::fs::read_to_string(cert_path)
         .map_err(|e| format!("读取 CA 证书失败: {}", safe_err(&e)))?;
-    let b64: String = pem
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with("-----"))
-        .collect();
-    use base64::Engine as _;
-    let der = base64::engine::general_purpose::STANDARD
-        .decode(b64.as_bytes())
-        .map_err(|e| format!("CA 证书 PEM 解码失败: {}", safe_err(&e)))?;
-    use sha1::{Digest as _, Sha1};
-    let mut hasher = Sha1::new();
-    hasher.update(&der);
-    Ok(hex::encode_upper(hasher.finalize()))
+    thumbprint_of_pem(&pem).ok_or_else(|| "CA 证书 PEM 解码失败（文件损坏？）".to_string())
 }
 
-/// 检测根证书是否已成功安装到 Windows 系统信任库。
-#[tauri::command]
-pub async fn check_ca_trust(app: tauri::AppHandle) -> Result<CaTrustStatus, String> {
-    let cert_path = ca_cert_path(&app)?;
-    if !cert_path.exists() {
-        return Err("CA 证书尚未生成，请先重启应用".to_string());
-    }
-    let (lm, cu, _total) = query_trust_counters(&cert_path).await?;
+/// 在各平台的信任库里查找本应用 CA，返回「装在哪」的可读位置列表。
+///
+/// 三个平台的位置命名刻意不同（用户看到的是自己系统里的真实名词）：
+/// - Windows：本机信任库（所有用户）/ 当前用户信任库
+/// - macOS：本机钥匙串（所有用户）/ 当前用户钥匙串
+/// - Linux：系统信任库（所有用户）/ 当前用户证书库（Chromium 系浏览器）
+#[cfg(target_os = "windows")]
+async fn trust_locations(cert_path: &std::path::Path) -> Result<Vec<String>, String> {
+    let (lm, cu, _total) = query_trust_counters(cert_path).await?;
     let mut locations = Vec::new();
     if lm > 0 {
         locations.push("本机信任库（所有用户）".to_string());
@@ -1165,6 +1400,71 @@ pub async fn check_ca_trust(app: tauri::AppHandle) -> Result<CaTrustStatus, Stri
     if cu > 0 {
         locations.push("当前用户信任库".to_string());
     }
+    Ok(locations)
+}
+
+/// macOS：逐个钥匙串导出证书，按 SHA-1 指纹比对。
+///
+/// 不用 `security verify-cert`：那是在验证「某张证书能否被信任」，判据里还掺了
+/// 有效期与用途；我们要回答的是「这张证书在不在某个钥匙串里」，直接比指纹更准。
+#[cfg(target_os = "macos")]
+fn macos_keychain_present(thumbprint: &str, keychain: &str) -> bool {
+    match run_cmd("/usr/bin/security", &["find-certificate", "-a", "-p", keychain]) {
+        Ok((true, stdout, _)) => split_pem_certs(&stdout)
+            .iter()
+            .any(|pem| thumbprint_of_pem(pem).as_deref() == Some(thumbprint)),
+        _ => false,
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn trust_locations(cert_path: &std::path::Path) -> Result<Vec<String>, String> {
+    let expect = expect_thumbprint(cert_path)?;
+    let mut locations = Vec::new();
+    if macos_keychain_present(&expect, MACOS_SYSTEM_KEYCHAIN) {
+        locations.push("本机钥匙串（所有用户）".to_string());
+    }
+    if let Some(login) = macos_login_keychain() {
+        if macos_keychain_present(&expect, &login) {
+            locations.push("当前用户钥匙串".to_string());
+        }
+    }
+    Ok(locations)
+}
+
+/// Linux：系统信任库看落地文件，用户证书库看 NSS 里的服务名。
+#[cfg(target_os = "linux")]
+async fn trust_locations(cert_path: &std::path::Path) -> Result<Vec<String>, String> {
+    // 先确认证书文件本身可读/可解析（文件损坏时应报错，而不是报"未安装"）
+    let _ = expect_thumbprint(cert_path)?;
+    let mut locations = Vec::new();
+    if std::path::Path::new(LINUX_SYSTEM_CA).exists() {
+        locations.push("系统信任库（所有用户）".to_string());
+    }
+    if let Some(db) = linux_nss_db() {
+        if run_cmd("certutil", &["-L", "-d", &db, "-n", LINUX_NSS_NICKNAME])
+            .map(|(ok, _, _)| ok)
+            .unwrap_or(false)
+        {
+            locations.push("当前用户证书库（Chromium 系浏览器）".to_string());
+        }
+    }
+    Ok(locations)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+async fn trust_locations(_cert_path: &std::path::Path) -> Result<Vec<String>, String> {
+    Ok(Vec::new())
+}
+
+/// 检测根证书是否已成功安装到本机信任库。
+#[tauri::command]
+pub async fn check_ca_trust(app: tauri::AppHandle) -> Result<CaTrustStatus, String> {
+    let cert_path = ca_cert_path(&app)?;
+    if !cert_path.exists() {
+        return Err("CA 证书尚未生成，请先重启应用".to_string());
+    }
+    let locations = trust_locations(&cert_path).await?;
     let trusted = !locations.is_empty();
     let detail = if trusted {
         format!(
@@ -1201,6 +1501,7 @@ mod ca_trust_tests {
         assert_eq!(decoded, script);
     }
 
+    #[cfg(target_os = "windows")]
     #[tokio::test]
     async fn test_query_trust_counters_channel() {
         // 生成一把临时 CA 验证「文件→指纹→注册表枚举」通道健康：
@@ -1234,6 +1535,7 @@ mod ca_trust_tests {
     /// 用 `winreg` 独立数一遍当前用户根库的子键数，作为 [`query_trust_counters`]
     /// 里那段 PowerShell 枚举的对照组。
     /// 键不存在时计 0 —— 与 `Get-ChildItem -ErrorAction SilentlyContinue` 的行为一致。
+    #[cfg(target_os = "windows")]
     fn hkcu_root_subkey_count() -> usize {
         use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
         use winreg::RegKey;
@@ -1272,6 +1574,64 @@ mod ca_trust_tests {
         assert_eq!(tp.len(), 40);
         assert!(tp.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_lowercase()));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 指纹算法对齐外部权威值：SHA-1 对 `"abc"` 的 NIST 标准测试向量是
+    /// `a9993e364706816aba3e25717850c26c9cd0d89d`，其 base64 为 `YWJj`。
+    ///
+    /// 这条测试的价值在于「指纹不是自造的」：三平台（Windows Thumbprint /
+    /// 注册表子键名 / macOS security -Z）都按 SHA-1 of DER 取值，一旦哪天有人
+    /// 把实现改成 SHA-256 或加了换行/头部参与摘要，这里会立刻红。
+    #[test]
+    fn test_thumbprint_matches_known_sha1_vector() {
+        let pem = "-----BEGIN CERTIFICATE-----\nYWJj\n-----END CERTIFICATE-----\n";
+        assert_eq!(
+            thumbprint_of_pem(pem).as_deref(),
+            Some("A9993E364706816ABA3E25717850C26C9CD0D89D")
+        );
+        // 换行形态不影响摘要：Windows 上常见的 CRLF 结尾必须得到同一指纹
+        let crlf = "-----BEGIN CERTIFICATE-----\r\nYWJj\r\n-----END CERTIFICATE-----\r\n";
+        assert_eq!(thumbprint_of_pem(pem), thumbprint_of_pem(crlf));
+        // 内容变了指纹必须变（否则比对永远为真，等于没检测）
+        let other = "-----BEGIN CERTIFICATE-----\nYWJk\n-----END CERTIFICATE-----";
+        assert_ne!(thumbprint_of_pem(pem), thumbprint_of_pem(other));
+        assert!(thumbprint_of_pem("not a pem").is_none());
+    }
+
+    /// macOS 的多证书文本切块：`security find-certificate -a -p` 会一次性导出
+    /// 整个钥匙串，必须切块后逐张比指纹。
+    #[test]
+    fn test_split_pem_certs_cuts_each_block() {
+        let text = "junk before\n\
+-----BEGIN CERTIFICATE-----\nZZZ1\n-----END CERTIFICATE-----\n\
+-----BEGIN CERTIFICATE-----\nZZZ2\n-----END CERTIFICATE-----\n\
+trailing junk";
+        let blocks = split_pem_certs(text);
+        assert_eq!(blocks.len(), 2, "{:?}", blocks);
+        assert!(blocks[0].contains("ZZZ1") && !blocks[0].contains("ZZZ2"));
+        assert!(blocks[1].contains("ZZZ2"));
+        // 没有结束行 → 截断的块不产出（宁可少一张，也不要半截指纹比对）
+        assert_eq!(split_pem_certs("-----BEGIN CERTIFICATE-----\nZZZ1\n").len(), 0);
+        assert!(split_pem_certs("").is_empty());
+    }
+
+    /// osascript 源文本的两处转义：AppleScript 字符串里的 `"` 与其中的反斜杠。
+    /// 写错的表现是提权命令被截断（静默失效），所以钉死。
+    #[test]
+    fn test_macos_admin_shell_source_escapes() {
+        let src = macos_admin_shell_source("/bin/sh '/tmp/a.sh'");
+        assert_eq!(
+            src,
+            "do shell script \"/bin/sh '/tmp/a.sh'\" with administrator privileges"
+        );
+        let quoted = macos_admin_shell_source("echo \"hi\"");
+        assert_eq!(
+            quoted,
+            "do shell script \"echo \\\"hi\\\"\" with administrator privileges"
+        );
+        // 反斜杠必须先被转义，否则后面插入的 `\"` 会被二次转义
+        let backslash = macos_admin_shell_source("a\\b");
+        assert!(backslash.contains("a\\\\b"), "{}", backslash);
     }
 }
 
@@ -1533,6 +1893,7 @@ pub async fn emergency_cutoff_owned(app: tauri::AppHandle, st: Arc<AppState>) ->
 /// 先读注册表确认"到底装在哪"（子键名即指纹），再只对存在的库执行删除——
 /// 不先查就删，会把「本来就没装」误报成「删除失败」。
 /// 返回 (用户库已移除, 本机库已移除, 结论文案)。
+#[cfg(target_os = "windows")]
 fn revoke_ca_from_trust(cert_path: &std::path::Path) -> Result<(bool, bool, String), String> {
     let thumbprint = expect_thumbprint(cert_path)?;
     let (in_machine, in_user) = cert_present_sync(&thumbprint);
@@ -1563,10 +1924,144 @@ fn revoke_ca_from_trust(cert_path: &std::path::Path) -> Result<(bool, bool, Stri
     Ok((user_removed, machine_removed, parts.join("；")))
 }
 
+/// macOS：逐个钥匙串先查再删；本机钥匙串需要管理员授权。
+#[cfg(target_os = "macos")]
+fn revoke_ca_from_trust(cert_path: &std::path::Path) -> Result<(bool, bool, String), String> {
+    let thumbprint = expect_thumbprint(cert_path)?;
+    let mut parts: Vec<String> = Vec::new();
+    let mut user_removed = false;
+    let mut machine_removed = false;
+    let mut any_present = false;
+
+    if let Some(login) = macos_login_keychain() {
+        if macos_keychain_present(&thumbprint, &login) {
+            any_present = true;
+            match run_cmd(
+                "/usr/bin/security",
+                &["delete-certificate", "-Z", &thumbprint, &login],
+            ) {
+                Ok((true, _, _)) => {
+                    user_removed = true;
+                    parts.push("已从当前用户钥匙串移除".to_string());
+                }
+                Ok((_, stdout, stderr)) => parts.push(format!(
+                    "当前用户钥匙串移除失败：{}",
+                    brief(&stderr, &stdout)
+                )),
+                Err(e) => parts.push(format!("当前用户钥匙串移除失败：{}", e)),
+            }
+        }
+    }
+
+    if macos_keychain_present(&thumbprint, MACOS_SYSTEM_KEYCHAIN) {
+        any_present = true;
+        // -Z 接 SHA-1（与 Windows Thumbprint 同值），先查再删的"查"已在上面做过
+        let body = format!(
+            "/usr/bin/security delete-certificate -Z '{}' '{}'\n",
+            thumbprint, MACOS_SYSTEM_KEYCHAIN
+        );
+        match macos_elevated_sh("ca_revoke", &body) {
+            Ok(()) => {
+                machine_removed = true;
+                parts.push("已从本机钥匙串移除".to_string());
+            }
+            Err(e) => parts.push(format!("本机钥匙串移除失败（需管理员权限）：{}", e)),
+        }
+    }
+
+    if !any_present {
+        return Ok((
+            false,
+            false,
+            "系统信任库中未找到本应用 CA（无需撤销）".to_string(),
+        ));
+    }
+    Ok((user_removed, machine_removed, parts.join("；")))
+}
+
+/// Linux：NSS 用户库（免授权）+ 系统信任库（需授权）两处，各自先查再删。
+#[cfg(target_os = "linux")]
+fn revoke_ca_from_trust(cert_path: &std::path::Path) -> Result<(bool, bool, String), String> {
+    // 证书文件本身要能解析（损坏时应当报错，而不是报"无需撤销"）
+    let _ = expect_thumbprint(cert_path)?;
+    let mut parts: Vec<String> = Vec::new();
+    let mut user_removed = false;
+    let mut machine_removed = false;
+    let mut any_present = false;
+
+    if let Some(db) = linux_nss_db() {
+        let present = run_cmd("certutil", &["-L", "-d", &db, "-n", LINUX_NSS_NICKNAME])
+            .map(|(ok, _, _)| ok)
+            .unwrap_or(false);
+        if present {
+            any_present = true;
+            match run_cmd("certutil", &["-D", "-d", &db, "-n", LINUX_NSS_NICKNAME]) {
+                Ok((true, _, _)) => {
+                    user_removed = true;
+                    parts.push("已从当前用户证书库移除".to_string());
+                }
+                Ok((_, stdout, stderr)) => parts.push(format!(
+                    "当前用户证书库移除失败：{}",
+                    brief(&stderr, &stdout)
+                )),
+                Err(e) => parts.push(format!("当前用户证书库移除失败：{}", e)),
+            }
+        }
+    }
+
+    if std::path::Path::new(LINUX_SYSTEM_CA).exists() {
+        any_present = true;
+        let body = format!(
+            "set -e\nrm -f '{}'\nif command -v update-ca-certificates >/dev/null 2>&1; then update-ca-certificates -f >/dev/null; elif command -v update-ca-trust >/dev/null 2>&1; then update-ca-trust; fi\n",
+            LINUX_SYSTEM_CA
+        );
+        match linux_elevated_sh(&body) {
+            Ok(()) => {
+                machine_removed = true;
+                parts.push("已从系统信任库移除".to_string());
+            }
+            Err(e) => parts.push(format!("系统信任库移除失败（需管理员权限）：{}", e)),
+        }
+    }
+
+    if !any_present {
+        return Ok((
+            false,
+            false,
+            "系统信任库中未找到本应用 CA（无需撤销）".to_string(),
+        ));
+    }
+    Ok((user_removed, machine_removed, parts.join("；")))
+}
+
+/// 其它平台：没有可撤销的信任库。
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn revoke_ca_from_trust(_cert_path: &std::path::Path) -> Result<(bool, bool, String), String> {
+    Ok((
+        false,
+        false,
+        "系统信任库中未找到本应用 CA（无需撤销）".to_string(),
+    ))
+}
+
+/// Linux：把证书装进系统信任库（需要管理员授权）。
+#[cfg(target_os = "linux")]
+fn linux_install_system_ca(cert_path: &std::path::Path) -> Result<(), String> {
+    // Debian 系用 update-ca-certificates，Red Hat 系用 update-ca-trust；
+    // 两者都没有时至少把文件放到约定目录（部分工具会直接读它）。
+    let body = format!(
+        "set -e\nmkdir -p /usr/local/share/ca-certificates\ncp '{}' '{}'\nif command -v update-ca-certificates >/dev/null 2>&1; then update-ca-certificates -f >/dev/null; elif command -v update-ca-trust >/dev/null 2>&1; then update-ca-trust; fi\n",
+        cert_path.display(),
+        LINUX_SYSTEM_CA
+    );
+    linux_elevated_sh(&body)
+}
+
 /// 查询指定指纹的证书是否存在于（本机信任库, 当前用户信任库）——同步版。
 ///
 /// 与 [`query_trust_counters`] 同源（读注册表子键，不用 `Cert:` PSDrive），
 /// 但走 `std::process`，供应急路径在阻塞线程里同步调用。
+#[cfg(target_os = "windows")]
 fn cert_present_sync(thumbprint: &str) -> (bool, bool) {
     let script = format!(
         r#"$ErrorActionPreference = 'SilentlyContinue'
@@ -1611,6 +2106,7 @@ Write-Output "CU=$cu""#,
 }
 
 /// `certutil [-user] -delstore Root <指纹>`；失败时返回按系统代码页解码后的报错。
+#[cfg(target_os = "windows")]
 fn run_certutil_delstore(user_store: bool, thumbprint: &str) -> Result<(), String> {
     let mut cmd = std::process::Command::new("certutil");
     if user_store {

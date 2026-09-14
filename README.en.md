@@ -15,6 +15,8 @@ real data locally — **the original text never leaves the machine and never tou
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4?logo=windows11&logoColor=white)
+![Platform](https://img.shields.io/badge/macOS-10.15%2B%20%28universal%29-000000?logo=apple&logoColor=white)
+![Platform](https://img.shields.io/badge/Linux-x64%20%28deb%20%2F%20AppImage%29-FCC624?logo=linux&logoColor=black)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-important.svg?logo=gnu)](./LICENSE)
 [![License: Commercial](https://img.shields.io/badge/License-Commercial%20Contact-white.svg?logo=github)](https://github.com/Technicalflight/AiGuard/issues)
 
@@ -37,7 +39,8 @@ third party — **the guard pipeline runs on your own machine**.
 ### 🔁 Local MITM reverse proxy
 - Automatic takeover via **system proxy + PAC**: only AI-domain traffic enters the guard pipeline, everything else connects directly
 - Covers the **API and web** domains of OpenAI / Anthropic / DeepSeek / Moonshot / Zhipu and other mainstream AI services
-- Decrypts HTTPS with a self-signed root CA, installed with **one click** from the settings page (`certutil`, current-user store, no admin rights) and revocable at any time
+- Decrypts HTTPS with a self-signed root CA, installed with **one click** from the settings page (into the current user's trust
+  store — no admin rights — and revocable at any time)
 
 ### 🕵️ Request-side redaction
 - **6 built-in detection rules**: national ID, phone number, bank card, email, API key, IP address
@@ -168,16 +171,49 @@ back half-open prefixes, and passes through over-long unclosed content (guarding
 | Dependency | Version |
 |---|---|
 | Windows | 10 / 11 (x64) |
-| Rust (MSVC toolchain) | 1.77+ |
+| macOS | 10.15+ (universal: Apple Silicon and Intel in one build) |
+| Linux | x64 (deb / AppImage; needs the WebKitGTK 4.1 runtime) |
+| Rust (MSVC / Xcode CLT / gcc) | 1.77+ |
 | Node.js | 18+ |
 | WebView2 Runtime | usually preinstalled on Win11 |
 
 ### Download
 
-Grab an installer from the [Releases](https://github.com/Technicalflight/AiGuard/releases) page (Windows `.exe` / `.msi`).
+Grab the right artifact for your platform from the [Releases](https://github.com/Technicalflight/AiGuard/releases) page:
+
+| Platform | Artifacts |
+|---|---|
+| Windows | `*-setup.exe` (NSIS wizard), `*.msi` |
+| macOS | `*.dmg` (universal: Apple Silicon + Intel) |
+| Linux | `*.deb`, `*.AppImage` |
 
 > [!NOTE]
-> The installers are not code-signed yet, so Windows may show a SmartScreen prompt on first launch — click "Run anyway".
+> The installers are not code-signed yet. Windows may show a SmartScreen prompt on first launch — click "Run anyway".
+> On macOS, right-click the app and choose **Open** the first time (or allow it under System Settings → Privacy & Security).
+> On Linux, `chmod +x` the AppImage before running.
+
+### Platform differences
+
+The guard core (MITM proxy, redaction, streaming restore, audit, bilingual UI) is **identical on all three platforms**;
+the parts that talk to the operating system use native channels:
+
+| Capability | Windows | macOS | Linux |
+|---|---|---|---|
+| System proxy (PAC) | registry + WinINET | `networksetup` (per network service) | GNOME `gsettings` |
+| Root CA trust | `certutil -user` (current-user store) | `security add-trusted-cert` (login keychain) | NSS user store / system trust store |
+| Root CA revocation | `certutil -delstore` | `security delete-certificate` | remove cert + rebuild trust store |
+| hosts privilege elevation | UAC (PowerShell RunAs) | osascript authorisation prompt | `pkexec` (falls back to `sudo -n`) |
+| CA private key at rest | DPAPI encryption | keychain (file holds a pointer only) | **plaintext + 0600** (no system keystore) |
+| Data-directory permission check | `icacls` ACL | permission bits | permission bits |
+| Debugger-attach detection | Win32 API | `sysctl` (P_TRACED) | `/proc` TracerPid |
+| Process attribution | connection table + process handle | `lsof` | `/proc/net/tcp` |
+| DNS cache flush | `ipconfig /flushdns` | `dscacheutil` + mDNSResponder | `resolvectl` |
+
+> [!IMPORTANT]
+> On Linux, without `gsettings` (non-GNOME desktops) or without polkit (`pkexec`), the corresponding capability reports
+> exactly what must be done by hand — the guard never runs silently in a state where you *believe* traffic is protected
+> while it actually goes out in plaintext. The transparent 443 layer (hosts mode) needs administrator / root rights on
+> every platform.
 
 ### Run from source
 
@@ -192,7 +228,19 @@ npm run tauri dev
 
 ```bash
 npm run tauri build
-# artifacts land in src-tauri/target/release/bundle/
+# artifacts land in src-tauri/target/release/bundle/ (Windows: nsis + msi)
+```
+
+Per platform:
+
+```bash
+# macOS (universal: Apple Silicon + Intel in one build)
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run tauri build -- --target universal-apple-darwin --bundles dmg
+
+# Linux (deb + AppImage; needs the WebKitGTK 4.1 dev packages)
+sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+npm run tauri build -- --bundles deb,appimage
 ```
 
 ### Tests and self-checks
@@ -212,8 +260,8 @@ npm run i18n:check       # dictionary self-check: keys vs call sites, missing tr
 2. **Install the root certificate**: the first wizard step, or "Settings" → "CA root certificate" → "Install". The guard needs to
    decrypt HTTPS in order to detect and redact; the certificate only affects the current user's trust chain and can be revoked at
    any time.
-3. **Enable the guard**: the second wizard step, or the proxy switch in the title bar. This writes the Windows system proxy and a
-   PAC file (only AI domains go through the local proxy).
+3. **Enable the guard**: the second wizard step, or the proxy switch in the title bar. This configures the operating system's
+   proxy with a PAC file (only AI domains go through the local proxy).
 4. **Confirm detection rules**: the third wizard step shows the built-in rules and list priority; adjust them in "Rules".
 5. **Use your AI apps normally**: no extra configuration — sensitive values are swapped out and replies restored automatically.
 6. **Configure shortcuts**: "Settings" → "Global shortcuts", pick one key for "Toggle guard" and one for "Emergency cut-off"
@@ -249,14 +297,14 @@ AiGuard/
 │       ├── state.rs         # AppState, CA generation, AI domain table, lists, wizard / shortcut / update config
 │       ├── proxy.rs         # hudsucker MITM engine (redact / block / restore)
 │       ├── transparent.rs   # hosts-mode transparent interception (SNI → dynamic cert → bridge to local proxy)
-│       ├── hosts.rs         # hosts-file marker block write / remove (needs admin rights)
+│       ├── hosts.rs         # hosts-file marker block write / remove (per-platform elevation)
 │       ├── dns.rs           # DNS lookups bypassing the system resolver (hosts-mode companion)
-│       ├── process.rs       # client process identification (TCP table → PID → exe path)
-│       ├── proxy_config.rs  # Windows registry system proxy + PAC generation
-│       ├── security.rs      # local hardening: debugger detection, DPAPI-protected CA key, port diagnostics
+│       ├── process.rs       # client process identification (connection table → PID → executable path)
+│       ├── proxy_config.rs  # system proxy on three platforms (registry / networksetup / gsettings) + PAC generation
+│       ├── security.rs      # local hardening: debugger detection, system-protected CA key at rest, port diagnostics
 │       ├── store.rs         # SQLite persistence: request log / audit events / kv config (no plaintext)
 │       ├── link_check.rs    # active-probe executor (trace-marker injection + echo verification)
-│       ├── console.rs       # external command output decoding (system code page → UTF-8)
+│       ├── console.rs       # external command output decoding (Windows code page → UTF-8; passthrough on unix)
 │       ├── i18n.rs          # out-of-window copy (tray / notifications) in Chinese and English
 │       └── commands.rs      # Tauri commands + events
 ├── src/                     # React + TypeScript front end (Vite)
@@ -287,6 +335,9 @@ AiGuard/
 - Applications using certificate pinning cannot be intercepted and are passed through automatically (so they keep working).
 - QUIC / HTTP3 (UDP) traffic does not go through the system proxy; disable QUIC in the browser (e.g. `chrome://flags`) for full coverage.
 - Placeholders for the same text differ across sessions: conversations restore independently, so do not copy a placeholder into another session.
+- **Linux**: with no system keystore available, the CA private key is stored as plaintext with 0600 permissions (the hardening
+  panel reports it honestly as "plaintext"); on non-GNOME desktops or without polkit, the system proxy and hosts elevation
+  must be completed manually as instructed.
 
 ---
 
