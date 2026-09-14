@@ -1,0 +1,40 @@
+version: 2
+
+# 依赖更新：按月、分组，尽量少打扰。
+# 本项目的依赖面较窄（Tauri 2 + Rust 生态），重点是让安全补丁能自动浮出来。
+updates:
+  # 前端依赖
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      frontend:
+        patterns: ["*"]
+    labels: ["dependencies"]
+
+  # Rust 依赖（workspace 根，覆盖 core 与 src-tauri）
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      rust:
+        patterns: ["*"]
+    labels: ["dependencies"]
+    ignore:
+      # 与 hudsucker 0.20 的 hyper 0.14 生态绑死，擅自升级会破坏代理引擎的类型契约。
+      # 升级需要连同 hudsucker 一起换，属人工专项，不接受自动 PR。
+      - dependency-name: "hyper"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "hyper-rustls"
+      - dependency-name: "tokio-rustls"
+
+  # Actions 本身
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels: ["dependencies", "ci"]

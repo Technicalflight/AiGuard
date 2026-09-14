@@ -1,0 +1,63 @@
+name: Release
+
+# 推一个形如 v0.1.0 的 tag 触发打包并发布 GitHub Release；
+# 也可以在 Actions 页面手动 workflow_dispatch 触发（由 tauri-action 建 tag）。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: 打包并发布（Windows x64）
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 打包并发布
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: "."
+          tagName: v__VERSION__
+          releaseName: "AiGuard v__VERSION__"
+          releaseBody: |
+            AiGuard v__VERSION__
+
+            AiGuard 是一个本地优先的 AI 流量安全网关（Tauri 2 + React 18 + Rust），基于 AGPL-3.0 开源：
+            - 本机 MITM 反向代理：系统代理 + PAC 只接管 AI 域名，自签根证书一键安装
+            - 请求侧脱敏：6 类内置规则（身份证 / 手机号 / 银行卡 / 邮箱 / API Key / IP），命中替换为可还原占位符
+            - 响应侧流式还原：SSE 逐帧还原，前瞻缓冲处理占位符被拆 chunk
+            - 七大防护信号：报错泄密 / 模型偷换 / 复读篡改 / 流式异常 / 响应夹带 / 记忆残留 / 高危指令
+            - 黑 / 白名单：域名与进程双向匹配，进程经本机 TCP 连接表反解 exe 路径
+            - 中英双语界面、首次运行向导、全局快捷键、默认关闭的更新检查
+
+            **安装说明**
+            - 下载 `.exe`（NSIS 安装向导）或 `.msi`
+            - 安装包未做代码签名，首次运行可能出现 SmartScreen 提示，点「仍要运行」即可
+
+            **隐私红线**：敏感原文只存在于本机内存的会话映射中，日志与审计事件只含类型 / 长度 / 摘要 / 哈希，
+            任何环节不落盘原文、不上传任何数据。
+
+            完整说明见 [README](https://github.com/Technicalflight/AiGuard#readme)。
+          releaseDraft: false
+          prerelease: false
