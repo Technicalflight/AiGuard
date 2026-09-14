@@ -91,6 +91,16 @@ export function t(key: string): string {
 }
 
 /**
+ * 「这段文本需要翻译吗」的判定：**汉字，或中文/全角标点**。
+ *
+ * ⚠ 只写 `[\u4e00-\u9fff]` 会漏掉纯标点片段——真实踩过：模板串里的 `。`
+ * 让英文界面渲染出 `...administrators。Current user ...`。
+ * 范围与 `scripts/i18n_extract.mjs` 的 CJK 保持一致（不含全角字母）。
+ */
+const HAS_CJK =
+  /[\u4e00-\u9fff\u3000-\u303f\ufe30-\ufe4f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]/;
+
+/**
  * 带占位符的条目自动升级为规则：`{}` → 捕获组，替换时对捕获内容递归翻译。
  * 这样 `发送失败: 请求超时` 这类「前缀 + 内层中文」的组合能逐层翻干净。
  */
@@ -103,7 +113,7 @@ function buildRules(): Rule[] {
   const rules: Rule[] = [];
   for (const [zh, en] of Object.entries(DICT)) {
     if (!zh.includes("{}") || !en) continue;
-    if (!/[\u4e00-\u9fff]/.test(zh)) continue;
+    if (!HAS_CJK.test(zh)) continue;
     const n = (zh.match(/\{\}/g) ?? []).length;
     if (n !== (en.match(/\{\}/g) ?? []).length) continue; // 占位符数量不一致则不建规则
     const body = zh
@@ -143,7 +153,7 @@ const FRAGMENTS = buildFragments();
  */
 export function tb(text: string): string {
   if (current === "zh" || !text) return text;
-  if (!/[\u4e00-\u9fff]/.test(text)) return text;
+  if (!HAS_CJK.test(text)) return text;
 
   const exact = DICT[text];
   if (exact) return exact;

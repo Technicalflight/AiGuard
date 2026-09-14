@@ -13,8 +13,16 @@
  * 这样的句子，键自带前导/尾随空格。翻译时必须把空格也安排对，
  * 否则英文会粘成 `passthrough5masked2`。本文件的统一做法是：
  * 前导空格留在译文里，让数字紧跟在冒号或介词之后。
+ *
+ * ⚠ 另有三个**标点**条目（`、` `（` `）`）是手工加的，抽取器扫不到它们：
+ * 后端返回的是中文位置名数组（如 `["当前用户信任库"]`），渲染时用中文顿号连接、
+ * 外面套全角括号。英文句子里必须换成半角括号 + 逗号，所以调用点写成
+ * `{t("（")}{locations.map(tb).join(t("、"))}{t("）")}`。
+ * 注意这三个键在 `[\\u4e00-\\u9fff]` 之外（全角括号属 U+FF00 区、顿号属 U+3001），
+ * 所以不会被「未包 t() 的中文」扫描发现——删掉它们不会有任何报错，只会静默露中文。
  */
 export const UI_DICT: Record<string, string> = {
+  "　": " ",
   " 分钟前": " min ago",
   " 个": "",
   " 个会话 · 已建立 ": " sessions · established ",
@@ -33,18 +41,24 @@ export const UI_DICT: Record<string, string> = {
   " 条原文↔占位符映射（仅存于本机内存）": " original↔placeholder mappings (in local memory only)",
   " 小时前": " h ago",
   "，用户名可留空）": ", username may be left empty)",
+  "、": ", ",
   "；并已要求代理级请求携带令牌": "; proxy-level requests are now required to carry the token",
   "；PAC 服务：": "; PAC service: ",
+  "。": ". ",
   "。重要：请①关闭浏览器的\"安全 DNS\"（Chrome/Edge 设置 → 隐私 → 使用安全 DNS，否则浏览器会绕过 hosts）；②执行 ipconfig /flushdns；③重启浏览器。CLI 工具无需这些步骤，hosts 对其直接生效。": ". Important: (1) turn off the browser's Secure DNS (Chrome/Edge → Settings → Privacy → Use secure DNS, otherwise the browser bypasses hosts); (2) run ipconfig /flushdns; (3) restart the browser. CLI tools need none of this — hosts applies to them directly.",
   "· 步骤": " · step",
   "· 需主动核查": " · needs active verification",
+  "（": "(",
   "（浏览器预览：模拟安装成功）": "(Browser preview: simulated install succeeded)",
   "（浏览器预览：模拟切换成功）": "(Browser preview: simulated toggle succeeded)",
   "（未知域名）": "(unknown domain)",
+  "）": ")",
+  "）。": ").",
   "「切断」销毁的是本机内存里该会话的映射：之后该会话的回复中若仍带占位符将无法还原；": "“Cut off” destroys this session's mapping in local memory: placeholders still present in later replies from that session can no longer be restored;",
   "」请求日志，共 ": "” request logs, ",
   "」请求日志？此操作不可恢复。": "” request logs? This cannot be undone.",
   "/v1/chat/completions（OpenAI 兼容）": "/v1/chat/completions (OpenAI-compatible)",
+  "/v1/messages（Anthropic）": "/v1/messages (Anthropic)",
   "⚠ 结果为未定（部分步骤无回执），不能视为「无风险」。": "⚠ Result is inconclusive (some steps returned no receipt) and must not be read as “no risk”.",
   "⚪ 未覆盖": "⚪ Not covered",
   "🔴 命中": "🔴 Hit",

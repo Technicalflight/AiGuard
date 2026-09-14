@@ -30,7 +30,22 @@ const ts = require("typescript");
 const FILE = process.argv[2] ?? "src/App.tsx";
 const OUT_DICT = process.argv[3] ?? "src/i18n-dict-ui.ts";
 
-const CJK = /[\u4e00-\u9fff]/;
+/**
+ * 「这段文本需要翻译吗」的判定：**汉字，或中文/全角标点**。
+ *
+ * ⚠ 只写 `[\u4e00-\u9fff]` 会漏掉**纯标点片段**，这是真实发生过的漏译：
+ *   - `}。${hardening.data_dir_detail}` 里的 `。`（英文界面渲染出
+ *     `...administrators。Current user ...`，中文句号卡在英文句子中间）
+ *   - `{t("命中规则（")}{n}）` 里那个**没包上**的 `）`
+ * 这些片段在汉字区之外，所以抽取器、自检、Rust 扫描**全链路都看不见它们** ——
+ * 删掉对应的 t() 不会有任何报错，只会在英文界面上静默露出中文标点。
+ *
+ * 纳入范围：CJK 标点区（U+3000-U+303F）、CJK 兼容形式（U+FE30-U+FE4F）、
+ * 以及全角标点（U+FF01-U+FF0F / U+FF1A-U+FF20 / U+FF3B-U+FF40 / U+FF5B-U+FF65）。
+ * **不含全角字母**（U+FF21-U+FF3A / U+FF41-U+FF5A），避免把全角英文误当中文。
+ */
+const CJK =
+  /[\u4e00-\u9fff\u3000-\u303f\ufe30-\ufe4f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]/;
 const keys = new Set();
 
 /**
@@ -297,6 +312,13 @@ const stub = [
   " * 这样的句子，键自带前导/尾随空格。翻译时必须把空格也安排对，",
   " * 否则英文会粘成 `passthrough5masked2`。本文件的统一做法是：",
   " * 前导空格留在译文里，让数字紧跟在冒号或介词之后。",
+  " *",
+  " * ⚠ 另有三个**标点**条目（`、` `（` `）`）是手工加的，抽取器扫不到它们：",
+  " * 后端返回的是中文位置名数组（如 `[\"当前用户信任库\"]`），渲染时用中文顿号连接、",
+  " * 外面套全角括号。英文句子里必须换成半角括号 + 逗号，所以调用点写成",
+  " * `{t(\"（\")}{locations.map(tb).join(t(\"、\"))}{t(\"）\")}`。",
+  " * 注意这三个键在 `[\\\\u4e00-\\\\u9fff]` 之外（全角括号属 U+FF00 区、顿号属 U+3001），",
+  " * 所以不会被「未包 t() 的中文」扫描发现——删掉它们不会有任何报错，只会静默露中文。",
   " */",
   "export const UI_DICT: Record<string, string> = {",
   ...allKeys.map((k) => `  ${JSON.stringify(k)}: ${JSON.stringify(existing.get(k) ?? "")},`),

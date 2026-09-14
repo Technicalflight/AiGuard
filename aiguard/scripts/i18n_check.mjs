@@ -249,6 +249,72 @@ const signalMismatch = [];
   }
 }
 
+// ─────────── 1c. 未包 t() 的中文（含中文标点）───────────
+//
+// 抽取器会把中文字面量机械包成 t()，但它**包不了**两类东西：
+//   - JSX 表达式容器里渲染的**变量**（`{e.evidence}` / `{trust?.detail}`）；
+//   - 拼接模板串里的**变量**部分。
+// 这两类只能在调用点手写 tb()。漏了不会有任何报错、不会编译失败，
+// 只在英文界面上露出中文——所以必须由自检兜住。
+//
+// ⚠ 正则必须包含**中文标点**，不能只查 [\u4e00-\u9fff]。真实踩过：
+//     `}。${hardening.data_dir_detail}`
+// 英文界面渲染成 `...administrators。Current user ...`——中文句号卡在英文句子中间。
+// 纯标点片段在所有「只查汉字」的地方（抽取器 / 自检 / Rust 扫描）都是隐形的。
+//
+// 只查 App.tsx / i18n.ts：api.ts 的 MOCK 串是「模拟后端产出」，本来就该是裸中文，
+// 运行时由 tb() 翻译（见 1a 节），在这里查会误报一大片。
+
+const HAS_CJK =
+  /[\u4e00-\u9fff\u3000-\u303f\ufe30-\ufe4f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]/;
+
+/**
+ * 有意保持中文的裸串，不参与本项检查：
+ *  - `简体中文`：语言自称，中文永远写作「简体中文」，不该翻；
+ *  - `未找到`：**与后端中文做比较的判断值**（`report.cert_note.includes("未找到")`）。
+ *    包成 `t("未找到")` 后，英文模式下 t() 返回 "Not found"，而 cert_note 仍是中文，
+ *    includes 恒为 false → 证书状态被误判。这类值必须保持中文字面量。
+ */
+const UNWRAPPED_ALLOW = new Set(["简体中文", "未找到"]);
+
+const unwrappedCjk = [];
+
+for (const file of ["src/App.tsx", "src/i18n.ts"]) {
+  const src = fs.readFileSync(file, "utf8");
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+  const wrapped = [];
+  (function walk(n) {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      (n.expression.text === "t" || n.expression.text === "tf" || n.expression.text === "tb")
+    ) {
+      for (const a of n.arguments) wrapped.push([a.getStart(sf), a.getEnd()]);
+    }
+    ts.forEachChild(n, walk);
+  })(sf);
+
+  const inWrapped = (n) => {
+    const s = n.getStart(sf);
+    const e = n.getEnd();
+    return wrapped.some(([a, b]) => s >= a && e <= b);
+  };
+
+  (function walk(n) {
+    let text = null;
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) text = n.text;
+    else if (ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n))
+      text = n.text;
+    else if (ts.isJsxText(n)) text = n.text.trim();
+    if (text && HAS_CJK.test(text) && !UNWRAPPED_ALLOW.has(text) && !inWrapped(n)) {
+      const { line } = sf.getLineAndCharacterOfPosition(n.getStart(sf));
+      unwrappedCjk.push({ file, line: line + 1, text });
+    }
+    ts.forEachChild(n, walk);
+  })(sf);
+}
+
 // ─────────── 汇总 ───────────
 
 const problems = [];
@@ -268,6 +334,15 @@ const orphanKeys = [...uiDict.keys()].filter(
 if (orphanKeys.length) {
   problems.push(`UI_DICT 里没有调用点的键（${orphanKeys.length} 条）——多半是键写错或调用点已删：`);
   for (const k of orphanKeys) problems.push(`    + ${JSON.stringify(k)}`);
+}
+
+if (unwrappedCjk.length) {
+  problems.push(
+    `未包 t()/tb() 的中文（含标点，${unwrappedCjk.length} 处）——英文模式下会原样露出：`
+  );
+  for (const u of unwrappedCjk) {
+    problems.push(`    ~ ${u.file}:${u.line}  ${JSON.stringify(u.text.slice(0, 60))}`);
+  }
 }
 
 if (fragSpaceIssues.length) {
