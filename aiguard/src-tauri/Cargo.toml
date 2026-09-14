@@ -1,0 +1,58 @@
+[package]
+name = "aiguard"
+version = "0.1.0"
+edition = "2021"
+description = "AI 安全卫士：本地 MITM 代理拦截发往 AI 服务的流量并脱敏"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+aiguard-core = { path = "../core" }
+# tray-icon：系统托盘（状态展示 / 快捷开关 / 最近事件）
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+# 桌面通知：拦截 / 高危事件弹系统通知（可选，设置页开关）
+tauri-plugin-notification = "2"
+# 全局快捷键：开关守护 / 一键应急切断（设置页可改键位或整体关闭）
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+# hudsucker 0.20 工作在 hyper 0.14 上（经 hudsucker::hyper 重导出），
+# rustls 0.21 / http 0.2 类型均通过 hudsucker 的重导出使用，勿直接引入 1.x/0.23 系
+hudsucker = "0.20"
+rcgen = "0.13"
+base64 = "0.22"
+sha1 = "0.10"
+# hosts 模式的透明 TLS 终结（版本须与 hudsucker 0.20 内部的 tokio-rustls 0.24 一致）
+tokio-rustls = "0.24"
+# hosts 模式：自定义上游 DNS 解析（绕过 hosts 自环）。
+# 自定义方式为实现 tower_service::Service<Name>（hyper 0.14 的 Resolve 是 sealed 别名）
+hyper = "0.14"
+tower-service = "0.3"
+hyper-rustls = { version = "0.24", default-features = false, features = ["http1", "logging", "tls12", "webpki-tokio"] }
+bytes = "1"
+futures = "0.3"
+async-trait = "0.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+winreg = "0.52"
+windows-sys = { version = "0.52", features = [
+    "Win32_Networking_WinInet",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    # 安全加固：CA 私钥 DPAPI 加密（CryptProtectData/UnprotectData）
+    "Win32_Security_Cryptography",
+    # 安全加固：调试器附加检测（IsDebuggerPresent / CheckRemoteDebuggerPresent）
+    "Win32_System_Diagnostics_Debug",
+    # 外部命令输出解码：MultiByteToWideChar / GetACP / GetOEMCP
+    # （icacls / certutil / PowerShell 输出是系统代码页，不是 UTF-8）
+    "Win32_Globalization",
+   ] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+hex = "0.4"
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1"

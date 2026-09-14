@@ -1,0 +1,17 @@
+[package]
+name = "aiguard-core"
+version = "0.1.0"
+edition = "2021"
+description = "AI 安全卫士核心逻辑：敏感信息检测、映射表、流式还原"
+
+[dependencies]
+regex = "1"
+aho-corasick = "1"
+dashmap = "6"
+uuid = { version = "1", features = ["v4"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+# 敏感内存主动擦除（原文映射表、请求采样在销毁时覆写字节）
+zeroize = { version = "1", features = ["std"] }

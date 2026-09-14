@@ -1,0 +1,30 @@
+{
+  "name": "aiguard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "i18n:extract": "node scripts/i18n_extract.mjs",
+    "i18n:rs": "node scripts/i18n_rs_extract.mjs",
+    "i18n:check": "node scripts/i18n_check.mjs",
+    "i18n:merge": "node scripts/i18n_merge.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@vitejs/plugin-react": "^4",
+    "typescript": "^5",
+    "vite": "^5"
+  }
+}

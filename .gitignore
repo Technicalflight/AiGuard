@@ -1,0 +1,25 @@
+# ─────────── 工作区根级忽略 ───────────
+# 注意：aiguard/ 下有它自己的 .gitignore（node_modules/、dist/、target/、src-tauri/gen/ 等）。
+# 本文件只管根目录，以及那些会污染仓库的临时产物。
+
+# 调试与 QA 过程的临时输出（_a3c.log、_r4_*.txt、qa_*.log 等）
+_*.log
+_*.txt
+qa_*.log
+
+# 本次改造的临时目录：改写前快照 + 旧日志归档
+_t/
+
+# Agent 记忆目录：属于本机状态，且含项目内部细节，不入库
+.workbuddy/
+.workbuddy-ai/
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Vite 临时文件
+vite.config.ts.timestamp-*.mjs

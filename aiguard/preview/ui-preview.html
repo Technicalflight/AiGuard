@@ -1,0 +1,1108 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI 安全卫士 · v2 界面设计预览（自定义窗口）</title>
+<style>
+/* ============================================================
+   AI 安全卫士 · 设计系统 v2
+   变化：自定义标题栏（无系统边框）+ 窄图标导航栏 + 守护首页
+   色彩基调不变：守护绿唯一主色 + 深墨绿锚点 + 琥珀/红语义色
+   ============================================================ */
+:root {
+  --bg: #f6f7f8;
+  --surface: #ffffff;
+  --rail: #0f1714;
+  --rail-text: #e8ecea;
+  --rail-muted: #8fa39b;
+  --ink: #1a2226;
+  --ink-2: #5f6e68;
+  --line: #e4e9e7;
+  --brand: #0e8a5f;
+  --brand-strong: #0b7350;
+  --brand-weak: #e6f4ee;
+  --warn: #b45309;
+  --warn-weak: #fdf3e3;
+  --danger: #c0392b;
+  --danger-weak: #fbeae8;
+  --radius: 12px;
+  --titlebar-h: 42px;
+  --rail-w: 64px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px; color: var(--ink);
+  background: linear-gradient(160deg, #e9edec 0%, #dfe6e3 100%);
+  -webkit-font-smoothing: antialiased; height: 100vh; overflow: hidden;
+}
+
+/* ===== 预览舞台：模拟桌面上的应用窗口 ===== */
+.stage {
+  height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: 28px; position: relative;
+}
+.stage-note {
+  position: absolute; top: 10px; left: 14px; font-size: 12px; color: #7d8a85;
+}
+.window {
+  width: min(1240px, 100%); height: min(820px, 100%);
+  background: var(--bg); border-radius: 14px; overflow: hidden;
+  box-shadow: 0 30px 90px rgba(15, 23, 20, 0.22), 0 2px 8px rgba(15, 23, 20, 0.10);
+  display: grid; grid-template-columns: var(--rail-w) 1fr;
+  grid-template-rows: var(--titlebar-h) 1fr;
+  border: 1px solid rgba(15, 23, 20, 0.35);
+}
+
+/* ===== 窄图标导航栏（左，贯穿标题栏到底） ===== */
+.rail {
+  grid-column: 1; grid-row: 1 / 3;
+  background: var(--rail); color: var(--rail-text);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 10px 0 14px; gap: 4px;
+}
+.rail-logo {
+  width: 36px; height: 36px; border-radius: 10px; margin-bottom: 14px;
+  background: rgba(14, 138, 95, 0.22); border: 1px solid rgba(14, 138, 95, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.rail-item {
+  width: 54px; padding: 8px 0 7px; border-radius: 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  border: none; background: transparent; cursor: pointer;
+  color: var(--rail-muted); font-family: inherit; font-size: 11px;
+  position: relative; transition: background .15s, color .15s;
+}
+.rail-item svg { width: 20px; height: 20px; }
+.rail-item:hover { color: var(--rail-text); background: rgba(255, 255, 255, 0.06); }
+.rail-item.active { color: #ffffff; background: rgba(14, 138, 95, 0.32); }
+.rail-item.active::before {
+  content: ""; position: absolute; left: -5px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 18px; border-radius: 2px; background: var(--brand);
+}
+.rail-spacer { flex: 1; }
+.rail-guard {
+  width: 54px; padding: 9px 0 8px; border-radius: 10px; margin-top: 6px;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 11px; color: var(--rail-muted);
+}
+.dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--brand);
+  animation: breathe 2.4s ease-in-out infinite;
+}
+.dot.off { background: #6b7a74; animation: none; }
+@keyframes breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(14, 138, 95, 0.55); opacity: 1; }
+  50% { box-shadow: 0 0 0 6px rgba(14, 138, 95, 0); opacity: 0.75; }
+}
+
+/* ===== 自定义标题栏（可拖拽区 + 窗口控制） ===== */
+.titlebar {
+  grid-column: 2; grid-row: 1;
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg); user-select: none;
+}
+.tb-title { font-size: 13px; font-weight: 500; color: var(--ink-2); padding-left: 24px; }
+.tb-right { display: flex; align-items: center; height: 100%; }
+.tb-toggle-wrap {
+  display: flex; align-items: center; gap: 8px; margin-right: 10px;
+  font-size: 12px; color: var(--ink-2);
+}
+.tb-divider { width: 1px; height: 18px; background: var(--line); margin-right: 4px; }
+.tb-controls { display: flex; align-items: center; height: 100%; }
+.wc {
+  width: 46px; height: 100%; border: none; background: transparent; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; color: var(--ink-2);
+  transition: background .12s;
+}
+.wc:hover { background: rgba(26, 34, 38, 0.07); color: var(--ink); }
+.wc.close:hover { background: #e81123; color: #ffffff; }
+
+/* ===== toggle 开关 ===== */
+.toggle {
+  position: relative; width: 40px; height: 22px; border-radius: 999px;
+  background: #cfd6d3; cursor: pointer; border: none;
+  transition: background .18s; flex-shrink: 0;
+}
+.toggle::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2);
+  transition: transform .18s;
+}
+.toggle.on { background: var(--brand); }
+.toggle.on::after { transform: translateX(18px); }
+
+/* ===== 内容区 ===== */
+.content {
+  grid-column: 2; grid-row: 2; overflow-y: auto; min-width: 0; position: relative;
+}
+.page { display: none; height: 100%; }
+.page.active { display: block; }
+.page-pad { padding: 22px 28px; }
+
+/* ===== 守护首页 ===== */
+.page-home { display: none; height: 100%; padding: 34px 48px 22px; position: relative; }
+.page-home.active { display: flex; flex-direction: column; }
+.home-top { display: flex; align-items: flex-start; gap: 24px; }
+.home-main { flex: 1; min-width: 0; padding-top: 8px; }
+.home-days { font-size: 15px; color: var(--ink-2); }
+.home-days b { color: var(--brand); font-size: 22px; font-weight: 600; margin: 0 2px; }
+.home-title {
+  font-size: 27px; font-weight: 600; letter-spacing: 0.5px; margin: 10px 0 8px;
+}
+.home-sub { font-size: 13.5px; color: var(--ink-2); }
+.home-cta-row { display: flex; align-items: center; gap: 14px; margin-top: 26px; }
+.cta {
+  height: 46px; padding: 0 30px; border-radius: 10px; border: none; cursor: pointer;
+  background: var(--brand); color: #ffffff; font-family: inherit;
+  font-size: 15.5px; font-weight: 600; letter-spacing: 1px;
+  box-shadow: 0 6px 18px rgba(14, 138, 95, 0.30);
+  transition: background .15s, transform .15s, box-shadow .15s;
+}
+.cta:hover { background: var(--brand-strong); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(14, 138, 95, 0.35); }
+.cta.ghost {
+  background: var(--surface); color: var(--brand); border: 1.5px solid var(--brand);
+  box-shadow: none;
+}
+.cta.ghost:hover { background: var(--brand-weak); }
+.cta.danger { background: var(--surface); color: var(--danger); border: 1.5px solid var(--danger); box-shadow: none; font-weight: 500; letter-spacing: .5px; }
+.cta.danger:hover { background: var(--danger-weak); box-shadow: none; }
+.sess-card { margin-top: 22px; }
+.sess-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.sess-title { font-size: 15px; font-weight: 600; }
+.sess-table { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.sess-row { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1.2fr) 74px 92px 84px; align-items: center; gap: 12px; padding: 10px 14px; font-size: 13px; border-top: 1px solid var(--line); }
+.sess-row:first-child { border-top: none; }
+.sess-row-head { background: var(--bg); font-size: 12px; color: var(--ink-2); font-weight: 500; }
+.sess-host { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.sess-pin { flex: none; font-size: 11px; font-weight: 400; color: var(--brand); background: var(--brand-weak); border-radius: 4px; padding: 1px 5px; }
+.sess-proc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-family: Consolas, "Courier New", monospace; font-size: 12px; }
+.sess-num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.sess-foot { margin-top: 10px; font-size: 12px; color: var(--ink-2); line-height: 1.8; }
+.sess-foot a { color: var(--brand); cursor: pointer; margin: 0 2px; }
+.home-tip {
+  margin-top: 30px; max-width: 560px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  border-left: 3px solid var(--brand); padding: 14px 18px;
+}
+.home-tip-title { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
+.home-tip-body { margin-top: 6px; font-size: 12.5px; color: var(--ink-2); line-height: 1.7; }
+.home-tip-links { margin-top: 8px; display: flex; gap: 16px; }
+.home-tip-links a { font-size: 12.5px; color: var(--brand); cursor: pointer; text-decoration: none; }
+.home-tip-links a:hover { text-decoration: underline; }
+
+/* 首页右侧插画 */
+.home-art {
+  width: 42%; max-width: 470px; flex-shrink: 0; position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.home-art svg.art { width: 100%; height: auto; max-height: 300px; }
+.home-art.off .shield-fill { fill: #b9c4bf; }
+.home-art.off .shield-fill-2 { fill: #a8b5af; }
+.float-chip {
+  position: absolute; display: flex; align-items: center; gap: 7px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 13px; font-size: 12px; color: var(--ink);
+  box-shadow: 0 4px 14px rgba(15, 23, 20, 0.08);
+  animation: floaty 5.5s ease-in-out infinite alternate;
+}
+.float-chip .fdot { width: 7px; height: 7px; border-radius: 50%; }
+.fc-1 { top: 14%; left: 2%; animation-delay: 0s; }
+.fc-2 { top: 34%; right: 0; animation-delay: 1.2s; }
+.fc-3 { bottom: 16%; left: 8%; animation-delay: 2.4s; }
+@keyframes floaty {
+  from { transform: translateY(0); }
+  to { transform: translateY(-9px); }
+}
+
+/* 弹幕胶囊：拦截 / 脱敏数据流 */
+.home-ticker {
+  flex: 1; min-height: 88px;
+  display: flex; flex-direction: column; justify-content: center; gap: 9px;
+  overflow: hidden; margin: 4px 0 10px;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+}
+.ticker-row { display: flex; width: max-content; animation: ticker-l 38s linear infinite; }
+.ticker-row.rev { animation: ticker-r 46s linear infinite; }
+.ticker-seg { display: flex; gap: 10px; padding-right: 10px; }
+@keyframes ticker-l { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes ticker-r { from { transform: translateX(-50%); } to { transform: translateX(0); } }
+.ticker-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 7px 14px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(26, 34, 38, 0.03);
+}
+.ticker-pill b { color: var(--ink); font-weight: 500; }
+.ticker-pill .fdot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.ticker-sep { color: #c3cdc8; }
+@media (prefers-reduced-motion: reduce) { .ticker-row { animation: none; } }
+
+/* 首页数据一览 */
+.home-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); margin-top: 22px; overflow: hidden;
+}
+.home-stat { padding: 14px 22px; display: flex; align-items: baseline; gap: 10px; }
+.home-stat + .home-stat { border-left: 1px solid var(--line); }
+.home-stat-value { font-size: 22px; font-weight: 600; }
+.home-stat-label { font-size: 12px; color: var(--ink-2); }
+
+/* 快捷入口行 */
+.home-foot {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  margin-top: 24px; padding-bottom: 4px;
+}
+.quick-row { display: flex; gap: 38px; }
+.quick {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  border: none; background: transparent; cursor: pointer; font-family: inherit;
+  color: var(--ink); font-size: 12.5px;
+}
+.quick-ico {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center; color: var(--ink-2);
+  transition: all .15s;
+}
+.quick:hover .quick-ico { border-color: var(--brand); color: var(--brand); box-shadow: 0 4px 12px rgba(14,138,95,.15); }
+.quick-ico svg { width: 22px; height: 22px; }
+.home-meta { font-size: 12px; color: var(--ink-2); text-align: right; line-height: 1.9; }
+
+/* ===== 通用组件（其余四页沿用） ===== */
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: 0 1px 2px rgba(26, 34, 38, 0.03);
+}
+.card-pad { padding: 18px 20px; }
+.stat-value { font-size: 24px; font-weight: 600; line-height: 1.2; }
+.stat-label { margin-top: 4px; font-size: 12px; color: var(--ink-2); }
+.badge {
+  display: inline-flex; align-items: center; padding: 2px 9px;
+  border-radius: 999px; font-size: 12px; font-weight: 500; white-space: nowrap;
+}
+.badge.green { background: var(--brand-weak); color: var(--brand); }
+.badge.amber { background: var(--warn-weak); color: var(--warn); }
+.badge.red { background: var(--danger-weak); color: var(--danger); }
+.badge.gray { background: #eef1f0; color: var(--ink-2); }
+table.data { width: 100%; border-collapse: collapse; }
+table.data th {
+  text-align: left; font-size: 12px; font-weight: 500; color: var(--ink-2);
+  padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+table.data td {
+  padding: 11px 14px; border-bottom: 1px solid #eef1f0; font-size: 13px;
+  white-space: nowrap; color: var(--ink);
+}
+table.data tr:last-child td { border-bottom: none; }
+.chip {
+  padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); font-size: 13px; color: var(--ink-2);
+  cursor: pointer; font-family: inherit; transition: all .15s;
+}
+.chip.active { background: var(--brand-weak); border-color: var(--brand); color: var(--brand); font-weight: 500; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.input:focus-visible, .dd-btn:focus-visible { outline: none; }
+.input::placeholder { color: #9aa8a2; }
+/* 自定义下拉（替代原生 select） */
+.dd { position: relative; display: inline-block; }
+.dd.open { z-index: 130; }
+.dd-btn {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-width: 96px; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface); font-family: inherit; font-size: 13px; color: var(--ink);
+  cursor: pointer; transition: border-color .15s, box-shadow .15s;
+}
+.dd-btn:hover { border-color: var(--brand); }
+.dd.open .dd-btn { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(14,138,95,.12); }
+.dd-btn svg { width: 12px; height: 12px; color: var(--ink-2); flex-shrink: 0; transition: transform .15s; }
+.dd.open .dd-btn svg { transform: rotate(180deg); }
+.dd-menu {
+  display: none; position: absolute; top: calc(100% + 5px); left: 0; z-index: 120;
+  min-width: 100%; padding: 5px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(15, 23, 20, 0.16);
+  animation: dd-in .12s ease;
+}
+.dd-menu.up { top: auto; bottom: calc(100% + 5px); }
+.dd.open .dd-menu { display: block; }
+@keyframes dd-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.dd-opt {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 8px 11px; border-radius: 7px; font-size: 13px; color: var(--ink);
+  cursor: pointer; white-space: nowrap;
+}
+.dd-opt:hover { background: #f0f4f2; }
+.dd-opt.sel { color: var(--brand); font-weight: 500; background: var(--brand-weak); }
+.dd-opt svg { width: 13px; height: 13px; flex-shrink: 0; }
+.input {
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface); font-family: inherit; font-size: 13px; color: var(--ink); width: 100%;
+}
+.input:focus { outline: none; border-color: var(--brand); }
+button.btn {
+  padding: 9px 18px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface); font-family: inherit; font-size: 13px; cursor: pointer;
+  color: var(--ink); transition: all .15s;
+}
+button.btn:hover { border-color: var(--brand); color: var(--brand); }
+button.btn.primary { background: var(--brand); border-color: var(--brand); color: #ffffff; }
+button.btn.primary:hover { background: var(--brand-strong); color: #ffffff; }
+button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.mini { padding: 5px 12px; font-size: 12px; border-radius: 6px; }
+.btn.mini.danger:hover { border-color: var(--danger); color: var(--danger); }
+.empty { padding: 56px 0; text-align: center; color: var(--ink-2); font-size: 13px; }
+.empty .empty-icon {
+  width: 44px; height: 44px; margin: 0 auto 12px; border-radius: 50%;
+  background: var(--brand-weak); display: flex; align-items: center; justify-content: center;
+}
+.notice {
+  display: flex; align-items: center; gap: 10px; background: var(--brand-weak);
+  border: 1px solid rgba(14, 138, 95, 0.25); color: var(--brand);
+  border-radius: 10px; padding: 11px 16px; font-size: 13px;
+}
+.muted { color: var(--ink-2); font-size: 12px; }
+.mono { font-family: Consolas, "Courier New", monospace; }
+.section-title { font-size: 14px; font-weight: 600; margin: 26px 0 12px; display: flex; align-items: center; gap: 8px; }
+.list-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.list-dot.danger { background: var(--danger); }
+.list-dot.brand { background: var(--brand); }
+.mode-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+.mode-card { padding: 18px; cursor: pointer; transition: border-color .15s; position: relative; }
+.mode-card:hover { border-color: var(--brand); }
+.mode-card.selected { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
+.mode-card.disabled { opacity: 0.55; cursor: not-allowed; }
+.mode-tag { position: absolute; top: 14px; right: 14px; }
+.mode-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; padding-right: 64px; }
+.mode-line { font-size: 12px; color: var(--ink-2); margin-top: 8px; }
+.rule-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+.rule-card { padding: 16px 18px; display: flex; flex-direction: column; height: 100%; }
+.rule-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.rule-name { font-weight: 600; font-size: 14px; }
+.rule-regex {
+  font-size: 12px; color: var(--ink-2); font-family: Consolas, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rule-foot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 12px; }
+.form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field-label { font-size: 12px; color: var(--ink-2); }
+.form-err {
+  margin-top: 10px; font-size: 12px; color: var(--danger);
+  background: var(--danger-weak); border-radius: 8px; padding: 8px 12px;
+}
+.hit-item {
+  display: flex; align-items: center; gap: 12px; padding: 12px 20px;
+  border-bottom: 1px solid #eef1f0; font-size: 13px;
+}
+.hit-item:last-child { border-bottom: none; }
+.hit-time { color: var(--ink-2); width: 90px; flex-shrink: 0; }
+.hit-host { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 滚动条：隐藏但保留滚动 */
+* { scrollbar-width: none; }
+::-webkit-scrollbar { width: 0; height: 0; display: none; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="stage-note">UI 设计预览 v2 · 自定义标题栏窗口 · 设计 tokens 与 src/ui.css 同源</div>
+  <div class="window">
+
+    <!-- ═══════════ 窄图标导航栏 ═══════════ -->
+    <aside class="rail">
+      <div class="rail-logo" title="AI 安全卫士">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path d="M12 3l7 3v5c0 4.4-2.9 8.3-7 9.5C7.9 19.3 5 15.4 5 11V6l7-3z" stroke="#2fbe8b" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M9 11.5l2.2 2.2L15.5 9.5" stroke="#2fbe8b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+
+      <button class="rail-item active" data-page="home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5L12 4l8 6.5V19a1 1 0 0 1-1 1h-5v-5h-4v5H5a1 1 0 0 1-1-1v-8.5z"/></svg>
+        <span>首页</span>
+      </button>
+      <button class="rail-item" data-page="requests">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 4 12 2.5-6h5"/></svg>
+        <span>请求</span>
+      </button>
+      <button class="rail-item" data-page="rules">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5 8h9M18 8h1M5 16h1M10 16h9"/><circle cx="16" cy="8" r="2.2"/><circle cx="8" cy="16" r="2.2"/></svg>
+        <span>规则</span>
+      </button>
+      <button class="rail-item" data-page="audit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h6M9 16h6M9 8h3"/></svg>
+        <span>审计</span>
+      </button>
+
+      <div class="rail-spacer"></div>
+
+      <div class="rail-guard">
+        <span class="dot" id="guardDot"></span>
+        <span id="guardRailText">守护中</span>
+      </div>
+      <button class="rail-item" data-page="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1"/></svg>
+        <span>设置</span>
+      </button>
+    </aside>
+
+    <!-- ═══════════ 自定义标题栏 ═══════════ -->
+    <header class="titlebar" id="titlebar">
+      <span class="tb-title" id="tbTitle">守护首页</span>
+      <div class="tb-right">
+        <div class="tb-toggle-wrap">
+          <span>代理开关</span>
+          <button class="toggle on" id="guardToggle"></button>
+        </div>
+        <div class="tb-divider"></div>
+        <div class="tb-controls">
+          <button class="wc" title="最小化">
+            <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 5.3h8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+          </button>
+          <button class="wc" title="最大化 / 还原">
+            <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.2" y="1.2" width="7.6" height="7.6" rx="1.2" stroke="currentColor" stroke-width="1.1" fill="none"/></svg>
+          </button>
+          <button class="wc close" title="关闭">
+            <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1.4 1.4l7.2 7.2M8.6 1.4L1.4 8.6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- ═══════════ 内容区 ═══════════ -->
+    <main class="content">
+
+      <!-- ══ 页面：守护首页 ══ -->
+      <div class="page page-home active" id="page-home">
+        <div class="home-top">
+          <div class="home-main">
+            <div class="home-days">已守护<b>12</b>天</div>
+            <h1 class="home-title" id="homeTitle">AI 安全卫士正在保护您的数据</h1>
+            <div class="home-sub" id="homeSub">敏感信息在本机完成检测与还原，原文永不出网</div>
+            <div class="home-cta-row">
+              <button class="cta" id="ctaOn" style="display:none">立即开启守护</button>
+              <button class="cta ghost" id="ctaOff">运行中 · 暂停守护</button>
+              <button class="cta danger">一键应急切断</button>
+              <span class="badge green">系统代理 + PAC</span>
+            </div>
+            <div class="home-tip">
+              <div class="home-tip-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#0e8a5f" stroke-width="1.6"/><path d="M12 8v4.5" stroke="#0e8a5f" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="15.8" r="1" fill="#0e8a5f"/></svg>
+                本机脱敏 · 数据不出网
+              </div>
+              <div class="home-tip-body">检测与还原全部在本机完成：命中即替换为占位符发往 AI 服务，响应到达后再还原展示；日志仅记录命中类型与哈希。</div>
+              <div class="home-tip-links">
+                <a data-goto="rules">查看检测规则</a>
+                <a data-goto="audit">查看审计日志</a>
+              </div>
+            </div>
+          </div>
+
+          <div class="home-art" id="homeArt">
+            <svg class="art" viewBox="0 0 460 380" fill="none">
+              <defs>
+                <linearGradient id="shg" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0" stop-color="#17a874"/>
+                  <stop offset="1" stop-color="#0b7350"/>
+                </linearGradient>
+              </defs>
+              <ellipse cx="230" cy="342" rx="150" ry="16" fill="#0f1714" opacity="0.07"/>
+              <rect x="112" y="52" width="236" height="236" rx="30" fill="#eef4f1" transform="rotate(45 230 170)"/>
+              <rect x="138" y="78" width="184" height="184" rx="26" fill="#e2efe9" transform="rotate(45 230 170)"/>
+              <rect x="164" y="104" width="132" height="132" rx="22" fill="#d5e8df" transform="rotate(45 230 170)"/>
+              <path d="M28 96h62l18 18" stroke="#cfe3da" stroke-width="2"/>
+              <circle cx="28" cy="96" r="3.5" fill="#cfe3da"/>
+              <path d="M432 118h-56l-14 14" stroke="#cfe3da" stroke-width="2"/>
+              <circle cx="432" cy="118" r="3.5" fill="#cfe3da"/>
+              <path d="M48 236h58l16-16" stroke="#d8e8e0" stroke-width="2"/>
+              <circle cx="48" cy="236" r="3.5" fill="#d8e8e0"/>
+              <path d="M414 252h-52l-14-14" stroke="#d8e8e0" stroke-width="2"/>
+              <circle cx="414" cy="252" r="3.5" fill="#d8e8e0"/>
+              <g>
+                <path class="shield-fill" d="M230 96l58 22v52c0 34-24 61-58 72-34-11-58-38-58-72v-52l58-22z" fill="url(#shg)"/>
+                <path class="shield-fill-2" d="M230 108l48 18v44c0 28-20 51-48 61-28-10-48-33-48-61v-44l48-18z" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2"/>
+                <path d="M206 172l17 17 32-34" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+              </g>
+            </svg>
+            <div class="float-chip fc-1"><span class="fdot" style="background:var(--brand)"></span>手机号 · 已脱敏</div>
+            <div class="float-chip fc-2"><span class="fdot" style="background:var(--danger)"></span>身份证 · 已拦截</div>
+            <div class="float-chip fc-3"><span class="fdot" style="background:var(--brand)"></span>API Key · 已脱敏</div>
+          </div>
+        </div>
+
+        <!-- 弹幕：拦截 / 脱敏数据流（打码胶囊，两行反向滚动） -->
+        <div class="home-ticker" aria-hidden="true">
+          <div class="ticker-row">
+            <span class="ticker-seg">
+              <span class="ticker-pill"><span class="fdot" style="background:var(--brand)"></span><span><b>手机号</b> <span class="mono">138****5678</span></span><span class="ticker-sep">·</span><span>api.openai.com</span><span class="ticker-sep">·</span><span style="color:var(--brand)">已脱敏</span></span>
+              <span class="ticker-pill"><span class="fdot" style="background:var(--danger)"></span><span><b>身份证</b> <span class="mono">1101**********01X</span></span><span class="ticker-sep">·</span><span>api.anthropic.com</span><span class="ticker-sep">·</span><span style="color:var(--danger)">已拦截</span></span>
+              <span class="ticker-pill"><span class="fdot" style="background:var(--brand)"></span><span><b>API Key</b> <span class="mono">sk-****9a3f</span></span><span class="ticker-sep">·</span><span>api.deepseek.com</span><span class="ticker-sep">·</span><span style="color:var(--brand)">已脱敏</span></span>
+            </span>
+            <span class="ticker-seg">
+              <span class="ticker-pill"><span class="fdot" style="background:var(--brand)"></span><span><b>手机号</b> <span class="mono">138****5678</span></span><span class="ticker-sep">·</span><span>api.openai.com</span><span class="ticker-sep">·</span><span style="color:var(--brand)">已脱敏</span></span>
+              <span class="ticker-pill"><span class="fdot" style="background:var(--danger)"></span><span><b>身份证</b> <span class="mono">1101**********01X</span></span><span class="ticker-sep">·</span><span>api.anthropic.com</span><span class="ticker-sep">·</span><span style="color:var(--danger)">已拦截</span></span>
+              <span class="ticker-pill"><span class="fdot" style="background:var(--brand)"></span><span><b>API Key</b> <span class="mono">sk-****9a3f</span></span><span class="ticker-sep">·</span><span>api.deepseek.com</span><span class="ticker-sep">·</span><span style="color:var(--brand)">已脱敏</span></span>
+            </span>
+          </div>
+          <div class="ticker-row rev">
+            <span class="ticker-seg">
+              <span class="ticker-pill"><span class="fdot" style="background:var(--warn)"></span><span><b>IP 地址</b> <span class="mono">192.168.*.*</span></span><span class="ticker-sep">·</span><span>open.bigmodel.cn</span><span class="ticker-sep">·</span><span style="color:var(--warn)">仅提醒</span></span>
+              <span class="ticker-pill"><span class="fdot" style="background:var(--brand)"></span><span><b>邮箱</b> <span class="mono">z****@163.com</span></span><span class="ticker-sep">·</span><span>api.moonshot.cn</span><span class="ticker-sep">·</span><span style="color:var(--brand)">已脱敏</span></span>
+              <span class="ticker-pill"><span class="fdot" style="background:var(--brand)"></span><span><b>银行卡</b> <span class="mono">6222****1234</span></span><span class="ticker-sep">·</span><span>dashscope.aliyuncs.com</span><span class="ticker-sep">·</span><span style="color:var(--brand)">已脱敏</span></span>
+            </span>
+            <span class="ticker-seg">
+              <span class="ticker-pill"><span class="fdot" style="background:var(--warn)"></span><span><b>IP 地址</b> <span class="mono">192.168.*.*</span></span><span class="ticker-sep">·</span><span>open.bigmodel.cn</span><span class="ticker-sep">·</span><span style="color:var(--warn)">仅提醒</span></span>
+              <span class="ticker-pill"><span class="fdot" style="background:var(--brand)"></span><span><b>邮箱</b> <span class="mono">z****@163.com</span></span><span class="ticker-sep">·</span><span>api.moonshot.cn</span><span class="ticker-sep">·</span><span style="color:var(--brand)">已脱敏</span></span>
+              <span class="ticker-pill"><span class="fdot" style="background:var(--brand)"></span><span><b>银行卡</b> <span class="mono">6222****1234</span></span><span class="ticker-sep">·</span><span>dashscope.aliyuncs.com</span><span class="ticker-sep">·</span><span style="color:var(--brand)">已脱敏</span></span>
+            </span>
+          </div>
+        </div>
+
+        <div class="home-stats">
+          <div class="home-stat"><span class="home-stat-value">128</span><span class="home-stat-label">今日请求</span></div>
+          <div class="home-stat"><span class="home-stat-value" style="color:var(--brand)">34</span><span class="home-stat-label">已脱敏</span></div>
+          <div class="home-stat"><span class="home-stat-value" style="color:var(--danger)">3</span><span class="home-stat-label">已拦截</span></div>
+          <div class="home-stat"><span class="home-stat-value">5</span><span class="home-stat-label">活跃会话</span></div>
+        </div>
+
+        <div class="card card-pad sess-card">
+          <div class="sess-head">
+            <div>
+              <div class="sess-title">当前活跃会话</div>
+              <div class="muted" style="margin-top:4px">3 个会话 · 已建立 7 条原文↔占位符映射（仅存于本机内存）</div>
+            </div>
+            <button class="btn mini">刷新</button>
+          </div>
+          <div class="sess-table">
+            <div class="sess-row sess-row-head"><span>域名</span><span>发起进程</span><span class="sess-num">占位符</span><span>最后活动</span><span></span></div>
+            <div class="sess-row">
+              <span class="sess-host">chat.deepseek.com<span class="sess-pin">在途</span></span>
+              <span class="sess-proc">chrome.exe</span>
+              <span class="sess-num">4</span>
+              <span class="muted">刚刚</span>
+              <span style="text-align:right"><button class="btn mini">切断</button></span>
+            </div>
+            <div class="sess-row">
+              <span class="sess-host">api.deepseek.com</span>
+              <span class="sess-proc">curl.exe</span>
+              <span class="sess-num">2</span>
+              <span class="muted">1 分钟前</span>
+              <span style="text-align:right"><button class="btn mini">切断</button></span>
+            </div>
+            <div class="sess-row">
+              <span class="sess-host">api.moonshot.cn</span>
+              <span class="sess-proc muted">未识别</span>
+              <span class="sess-num">1</span>
+              <span class="muted">9 分钟前</span>
+              <span style="text-align:right"><button class="btn mini">切断</button></span>
+            </div>
+          </div>
+          <div class="sess-foot">「切断」销毁的是本机内存里该会话的映射：之后该会话的回复中若仍带占位符将无法还原；<a>查看审计日志</a> 或在<a>设置</a> 中应急切断全部。</div>
+        </div>
+
+        <div class="home-foot">
+          <div class="quick-row">
+            <button class="quick" data-goto="settings">
+              <span class="quick-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-2.9 8.3-7 9.5C7.9 19.3 5 15.4 5 11V6l7-3z"/><path d="M9.5 12l2 2 3.5-4"/></svg></span>
+              安装证书
+            </button>
+            <button class="quick" data-goto="requests">
+              <span class="quick-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 4 12 2.5-6h5"/></svg></span>
+              实时请求
+            </button>
+            <button class="quick" data-goto="rules">
+              <span class="quick-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5 8h9M18 8h1M5 16h1M10 16h9"/><circle cx="16" cy="8" r="2.2"/><circle cx="8" cy="16" r="2.2"/></svg></span>
+              规则中心
+            </button>
+            <button class="quick" data-goto="audit">
+              <span class="quick-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h6M9 16h6M9 8h3"/></svg></span>
+              审计日志
+            </button>
+          </div>
+          <div class="home-meta">
+            <div>版本：0.1.0</div>
+            <div>模式：系统代理 + PAC</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ 页面：实时请求 ══ -->
+      <div class="page" id="page-requests">
+        <div class="page-pad">
+          <div style="display:flex;gap:8px;margin-bottom:14px" id="reqChips">
+            <button class="chip active" data-f="all">全部</button>
+            <button class="chip" data-f="mask">已脱敏</button>
+            <button class="chip" data-f="block">已拦截</button>
+          </div>
+          <div class="card">
+            <table class="data" id="reqTable">
+              <thead><tr><th>时间</th><th>域名</th><th>路径</th><th>命中类型</th><th>动作</th><th>哈希</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ 页面：规则中心 ══ -->
+      <div class="page" id="page-rules">
+        <div class="page-pad">
+          <div class="notice" style="margin-bottom:16px">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3l7 3v5c0 4.4-2.9 8.3-7 9.5C7.9 19.3 5 15.4 5 11V6l7-3z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+            内置规则可编辑、可恢复默认；支持新增自定义规则。名单优先级：黑名单（强制执行所选动作）＞ 白名单（不拦截，脱敏可选）＞ 检测规则
+          </div>
+          <div class="rule-grid" id="ruleGrid"></div>
+
+          <!-- 黑名单 -->
+          <div class="section-title"><span class="list-dot danger"></span>黑名单（强制执行所选动作 · 优先级最高）</div>
+          <div class="card">
+            <table class="data">
+              <thead><tr><th>类型</th><th>内容</th><th>命中动作</th><th style="text-align:right">操作</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><span class="badge gray">域名</span></td>
+                  <td class="mono" style="max-width:420px;overflow:hidden;text-overflow:ellipsis" title="untrusted-ai.example.com">untrusted-ai.example.com</td>
+                  <td><span class="badge red">已拦截</span></td>
+                  <td style="text-align:right"><button class="btn mini danger">删除</button></td>
+                </tr>
+                <tr>
+                  <td><span class="badge gray">进程</span></td>
+                  <td class="mono" style="max-width:420px;overflow:hidden;text-overflow:ellipsis" title="C:\Tools\legacy-scraper.exe">C:\Tools\legacy-scraper.exe</td>
+                  <td><span class="badge green">强制脱敏</span></td>
+                  <td style="text-align:right"><button class="btn mini danger">删除</button></td>
+                </tr>
+              </tbody>
+            </table>
+            <div style="padding:14px 18px;border-top:1px solid var(--line)">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <div class="dd"><button class="dd-btn" type="button"><span>域名</span><svg viewBox="0 0 12 12" fill="none"><path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+                <div class="dd"><button class="dd-btn" type="button"><span>命中即拦截</span><svg viewBox="0 0 12 12" fill="none"><path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+                <input class="input" style="flex:1;min-width:200px;width:auto" placeholder="如 untrusted-ai.example.com（子域名一并生效）" />
+                <button class="btn primary">添加</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 白名单 -->
+          <div class="section-title"><span class="list-dot brand"></span>白名单（不拦截 · 脱敏可选）</div>
+          <div class="card">
+            <table class="data">
+              <thead><tr><th>类型</th><th>内容</th><th>仍执行脱敏</th><th style="text-align:right">操作</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><span class="badge gray">域名</span></td>
+                  <td class="mono" style="max-width:420px;overflow:hidden;text-overflow:ellipsis">api.openai.com</td>
+                  <td><button class="toggle on"></button></td>
+                  <td style="text-align:right"><button class="btn mini danger">删除</button></td>
+                </tr>
+                <tr>
+                  <td><span class="badge gray">进程</span></td>
+                  <td class="mono" style="max-width:420px;overflow:hidden;text-overflow:ellipsis">C:\Program Files\JetBrains\IntelliJ IDEA\bin\idea64.exe</td>
+                  <td><button class="toggle"></button></td>
+                  <td style="text-align:right"><button class="btn mini danger">删除</button></td>
+                </tr>
+              </tbody>
+            </table>
+            <div style="padding:14px 18px;border-top:1px solid var(--line)">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <div class="dd"><button class="dd-btn" type="button"><span>进程（exe / 文件夹）</span><svg viewBox="0 0 12 12" fill="none"><path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+                <input class="input" style="flex:1;min-width:200px;width:auto" value="C:\Program Files\JetBrains\IntelliJ IDEA\bin\idea64.exe" />
+                <button class="btn">浏览文件…</button>
+                <button class="btn">浏览文件夹…</button>
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px"><button class="toggle on"></button><span class="muted">仍执行脱敏</span></label>
+                <button class="btn primary">添加</button>
+              </div>
+            </div>
+          </div>
+          <div class="muted" style="margin-top:10px;padding-bottom:16px">
+            提示：名单优先级为 黑名单（命中后强制执行所选动作：拦截或脱敏）＞ 白名单（不拦截，脱敏可选）＞ 检测规则。进程名单通过本机 TCP 连接表将来源端口反解为进程路径后匹配。
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ 页面：审计日志 ══ -->
+      <div class="page" id="page-audit">
+        <div class="page-pad">
+          <div class="notice" style="margin-bottom:14px">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3l7 3v5c0 4.4-2.9 8.3-7 9.5C7.9 19.3 5 15.4 5 11V6l7-3z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+            出于隐私保护，日志仅记录命中类型与哈希，不保存任何原文
+          </div>
+          <div class="card">
+            <table class="data">
+              <thead><tr><th>时间</th><th>域名</th><th>命中类型</th><th>动作</th><th>请求哈希</th></tr></thead>
+              <tbody>
+                <tr><td class="hit-time">09:20</td><td>api.openai.com</td><td><span class="badge amber">手机号</span></td><td><span class="badge green">已脱敏</span></td><td class="muted mono">a1b2c3d4e5f60718</td></tr>
+                <tr><td class="hit-time">09:18</td><td>api.anthropic.com</td><td><span class="badge amber">身份证</span></td><td><span class="badge red">已拦截</span></td><td class="muted mono">9f8e7d6c5b4a3210</td></tr>
+                <tr><td class="hit-time">09:15</td><td>api.deepseek.com</td><td><span class="badge amber">API Key</span></td><td><span class="badge green">已脱敏</span></td><td class="muted mono">1122334455667788</td></tr>
+                <tr><td class="hit-time">09:02</td><td>api.moonshot.cn</td><td><span class="badge amber">银行卡</span></td><td><span class="badge green">已脱敏</span></td><td class="muted mono">deadbeefcafebabe</td></tr>
+                <tr><td class="hit-time">08:40</td><td>open.bigmodel.cn</td><td><span class="badge amber">IP</span></td><td><span class="badge amber">仅提醒</span></td><td class="muted mono">0f1e2d3c4b5a6978</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ 页面：设置 ══ -->
+      <div class="page" id="page-settings">
+        <div class="page-pad" style="max-width:980px">
+          <div class="section-title" style="margin-top:0">拦截模式</div>
+          <div class="mode-grid">
+            <div class="card mode-card selected" data-mode="system">
+              <span class="mode-tag"><span class="badge green">推荐</span></span>
+              <div class="mode-title">系统代理 + PAC</div>
+              <div class="mode-line">对普通网站影响：几乎无</div>
+              <div class="mode-line">适合大多数用户，默认推荐</div>
+            </div>
+            <div class="card mode-card disabled">
+              <span class="mode-tag"><span class="badge gray">规划中</span></span>
+              <div class="mode-title">hosts 模式</div>
+              <div class="mode-line">影响：小（配置正确时）</div>
+              <div class="mode-line">适合需要抓取 CLI 工具流量</div>
+            </div>
+            <div class="card mode-card disabled">
+              <span class="mode-tag"><span class="badge gray">规划中</span></span>
+              <div class="mode-title">TUN 模式</div>
+              <div class="mode-line">影响：中～大（取决于分流）</div>
+              <div class="mode-line">适合高级用户，需处理与其他代理的冲突</div>
+            </div>
+          </div>
+
+          <div class="section-title">CA 根证书</div>
+          <div class="card card-pad">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:20px">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500">状态：<span class="badge green">证书文件已生成</span></div>
+                <div class="muted" style="margin-top:6px">证书文件已生成，如尚未安装请点击「安装根证书」</div>
+                <div class="muted mono" style="margin-top:4px;word-break:break-all">C:\Users\me\AppData\Roaming\com.technicalflight.aiguard\ca.cer</div>
+              </div>
+              <button class="btn primary" id="installBtn">安装根证书</button>
+            </div>
+            <div class="muted" style="margin-top:12px;padding:10px 12px;background:var(--warn-weak);border-radius:8px;color:var(--warn)">
+              风险提示：该根证书仅用于拦截本机发往 AI 服务的流量并做脱敏处理，绝不用于监控他人。请勿将证书私钥提供给任何第三方。
+            </div>
+          </div>
+
+          <div class="section-title">本机安全加固</div>
+          <div class="card card-pad" style="padding-top:4px">
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:13px 0;border-top:1px solid var(--line)">
+              <span class="list-dot brand" style="margin-top:6px"></span>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500">本地代理访问控制</div>
+                <div class="muted" style="margin-top:4px">代理仅接受本机回环（127.0.0.1）连接，同机其它主机 / 网段无法接入</div>
+              </div>
+              <label style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                <span class="muted">要求令牌</span>
+                <button class="toggle" id="tokenToggle"></button>
+              </label>
+            </div>
+            <div style="padding:4px 0 12px">
+              <div class="muted">本地代理令牌（供 CLI / SDK 配置：代理填 <code class="mono">http://令牌@127.0.0.1:8888</code>，用户名可留空）</div>
+              <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
+                <span class="mono" style="font-size:12px;word-break:break-all;background:var(--brand-weak);color:var(--brand);padding:4px 8px;border-radius:6px">9f3a••••••••c1d2</span>
+                <button class="btn mini">查看</button>
+                <button class="btn mini">重新生成</button>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:13px 0;border-top:1px solid var(--line)">
+              <span class="list-dot brand" style="margin-top:6px"></span>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500">代理端口占用检测</div>
+                <div class="muted" style="margin-top:4px">本应用正在监听 127.0.0.1:8888；PAC 服务：本应用正在监听 127.0.0.1:8889</div>
+              </div>
+              <button class="btn mini" style="flex-shrink:0">重新检测</button>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:13px 0;border-top:1px solid var(--line)">
+              <span class="list-dot brand" style="margin-top:6px"></span>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500">内存安全擦除</div>
+                <div class="muted" style="margin-top:4px">原文↔占位符映射表与请求正文采样在会话结束 / TTL 到期时用零覆写（zeroize）再释放，不留内存残影；当前活动会话 5 个</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:13px 0;border-top:1px solid var(--line)">
+              <span class="list-dot brand" style="margin-top:6px"></span>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500">防调试</div>
+                <div class="muted" style="margin-top:4px">未检测到调试器附加（启动时检测，之后每 30 秒复查一次）</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:13px 0;border-top:1px solid var(--line)">
+              <span class="list-dot brand" style="margin-top:6px"></span>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500">证书私钥保护</div>
+                <div class="muted" style="margin-top:4px;word-break:break-all">CA 私钥以 DPAPI 加密落盘，仅当前登录用户可解密：C:\Users\me\AppData\Roaming\com.technicalflight.aiguard\ca.key</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:13px 0;border-top:1px solid var(--line)">
+              <span class="list-dot brand" style="margin-top:6px"></span>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500">数据目录隔离</div>
+                <div class="muted" style="margin-top:4px">数据目录仅当前用户 / SYSTEM / 管理员可访问。当前访问项：simple\CodexSandboxUsers:(I)(OI)(CI)(RX)、NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)、BUILTIN\Administrators:(I)(OI)(CI)(F)、SIMPLE\s1mple:(I)(OI)(CI)(F)</div>
+              </div>
+            </div>
+            <div style="padding-top:12px;border-top:1px solid var(--line)">
+              <div class="muted">已通过本代理发起请求的程序（2）</div>
+              <div class="mono" style="margin-top:6px;font-size:12px;white-space:pre-wrap;word-break:break-all">C:\Program Files\Google\Chrome\Application\chrome.exe
+C:\Windows\System32\curl.exe</div>
+            </div>
+            <div style="padding-top:12px;border-top:1px solid var(--line)">
+              <div class="muted">启动自检</div>
+              <ul style="margin:6px 0 0 18px;padding:0">
+                <li class="muted" style="margin-bottom:2px">本地代理已就绪：本应用正在监听 127.0.0.1:8888</li>
+                <li class="muted" style="margin-bottom:2px">CA 私钥已用 DPAPI 加密落盘（仅当前用户可解密）。</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="section-title">桌面通知</div>
+          <div class="card card-pad">
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:13px 0;border-top:1px solid var(--line)">
+              <span class="list-dot brand" style="margin-top:6px"></span>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500">安全事件系统通知</div>
+                <div class="muted" style="margin-top:4px">拦截与高危事件发生时弹一条系统通知，便于守护在后台运行时也能第一时间察觉。文案只含严重度、信号名称与域名，不含任何原文。</div>
+              </div>
+              <div style="flex:none;display:flex;align-items:center;gap:8px">
+                <span class="muted">已开启</span>
+                <span class="toggle on"></span>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:13px 0;border-top:1px solid var(--line)">
+              <span class="list-dot brand" style="margin-top:6px"></span>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500">触发门槛</div>
+                <div class="muted" style="margin-top:4px">门槛越严越安静；通知仅在主窗口不在前台时弹出（正看着界面时不再打扰）。</div>
+              </div>
+              <div style="flex:none;width:260px">
+                <div class="dd"><button class="dd-btn"><span>高危及以上（HIGH / CRITICAL，推荐）</span><svg viewBox="0 0 12 12" fill="none"><path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:13px 0;border-top:1px solid var(--line)">
+              <span class="list-dot brand" style="margin-top:6px"></span>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:500">通知通道自检</div>
+                <div class="muted" style="margin-top:4px">若系统始终不弹通知，请到 Windows「系统 → 通知和操作」确认本应用的通知权限未被关闭。</div>
+              </div>
+              <button class="btn mini">发送测试通知</button>
+            </div>
+          </div>
+
+          <div class="section-title">数据安全</div>
+          <div class="card card-pad">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div>
+                <div style="font-weight:500">退出时清空映射表</div>
+                <div class="muted" style="margin-top:4px">日志仅存命中类型与哈希、映射表仅存内存，进程退出即消失</div>
+              </div>
+              <button class="toggle on" id="clearToggle"></button>
+            </div>
+          </div>
+
+          <div style="margin-top:22px">
+            <button class="btn primary" id="guardBtnMain">关闭守护（还原系统代理）</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<script>
+// ═══════════ 页面切换（导航栏 / 快捷入口 / 提示卡链接） ═══════════
+var TITLES = { home: "守护首页", requests: "实时请求", rules: "规则中心", audit: "审计日志", settings: "设置" };
+function gotoPage(key) {
+  document.querySelectorAll(".rail-item[data-page]").forEach(function (b) {
+    b.classList.toggle("active", b.dataset.page === key);
+  });
+  document.querySelectorAll(".page").forEach(function (p) { p.classList.remove("active"); });
+  document.getElementById("page-" + key).classList.add("active");
+  document.getElementById("tbTitle").textContent = TITLES[key];
+}
+document.querySelectorAll("[data-page]").forEach(function (btn) {
+  btn.addEventListener("click", function () { gotoPage(btn.dataset.page); });
+});
+document.querySelectorAll("[data-goto]").forEach(function (el) {
+  el.addEventListener("click", function () { gotoPage(el.dataset.goto); });
+});
+
+// ═══════════ 守护开关（标题栏 / 首页 CTA / 侧栏状态联动） ═══════════
+var guardOn = true;
+function renderGuard() {
+  document.getElementById("guardToggle").classList.toggle("on", guardOn);
+  document.getElementById("guardDot").classList.toggle("off", !guardOn);
+  document.getElementById("guardRailText").textContent = guardOn ? "守护中" : "未开启";
+  document.getElementById("ctaOn").style.display = guardOn ? "none" : "";
+  document.getElementById("ctaOff").style.display = guardOn ? "" : "none";
+  document.getElementById("homeTitle").textContent = guardOn
+    ? "AI 安全卫士正在保护您的数据"
+    : "守护未开启，敏感信息可能随请求出网";
+  document.getElementById("homeSub").textContent = guardOn
+    ? "敏感信息在本机完成检测与还原，原文永不出网"
+    : "点击下方按钮立即开启，全程仅需数秒";
+  document.getElementById("homeArt").classList.toggle("off", !guardOn);
+  document.getElementById("guardBtnMain").textContent = guardOn ? "关闭守护（还原系统代理）" : "开启守护（设置系统代理）";
+}
+document.getElementById("guardToggle").addEventListener("click", function () { guardOn = !guardOn; renderGuard(); });
+document.getElementById("ctaOn").addEventListener("click", function () { guardOn = true; renderGuard(); });
+document.getElementById("ctaOff").addEventListener("click", function () { guardOn = false; renderGuard(); });
+document.getElementById("guardBtnMain").addEventListener("click", function () { guardOn = !guardOn; renderGuard(); });
+
+// ═══════════ 实时请求（mock + 筛选） ═══════════
+var REQ = [
+  { t: "09:20", host: "api.openai.com", path: "/v1/chat/completions", kinds: ["手机号", "邮箱"], action: "mask", hash: "a1b2c3d4e5f60718" },
+  { t: "09:18", host: "api.anthropic.com", path: "/v1/messages", kinds: ["身份证"], action: "block", hash: "9f8e7d6c5b4a3210" },
+  { t: "09:15", host: "api.deepseek.com", path: "/chat/completions", kinds: ["API Key"], action: "mask", hash: "1122334455667788" },
+  { t: "09:11", host: "dashscope.aliyuncs.com", path: "/api/v1/services/aigc", kinds: [], action: "passthrough", hash: "" },
+  { t: "09:02", host: "api.moonshot.cn", path: "/v1/chat/completions", kinds: ["银行卡"], action: "mask", hash: "deadbeefcafebabe" },
+  { t: "09:00", host: "api.openai.com", path: "/v1/embeddings", kinds: [], action: "passthrough", hash: "" },
+  { t: "08:40", host: "open.bigmodel.cn", path: "/api/paas/v4/chat", kinds: ["IP"], action: "warn", hash: "0f1e2d3c4b5a6978" }
+];
+var ACTION_HTML = {
+  mask: '<span class="badge green">已脱敏</span>',
+  block: '<span class="badge red">已拦截</span>',
+  warn: '<span class="badge amber">仅提醒</span>',
+  passthrough: '<span class="badge gray">直通</span>'
+};
+var reqFilter = "all";
+function renderRequests() {
+  var tbody = document.querySelector("#reqTable tbody");
+  tbody.innerHTML = "";
+  var shown = REQ.filter(function (r) {
+    if (reqFilter === "all") return true;
+    if (reqFilter === "block") return r.action === "block";
+    return r.action === reqFilter;
+  });
+  if (shown.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty" style="display:block">暂无拦截记录，守护静默运行中</td></tr>';
+    return;
+  }
+  shown.forEach(function (r) {
+    var tr = document.createElement("tr");
+    var kinds = r.kinds.length
+      ? r.kinds.map(function (k) { return '<span class="badge amber">' + k + "</span>"; }).join(" ")
+      : '<span class="muted">—</span>';
+    tr.innerHTML = '<td class="hit-time">' + r.t + "</td><td>" + r.host + '</td><td class="muted">' + r.path + "</td><td>" + kinds + "</td><td>" + ACTION_HTML[r.action] + '</td><td class="muted mono">' + (r.hash || "—") + "</td>";
+    tbody.appendChild(tr);
+  });
+}
+document.querySelectorAll("#reqChips .chip").forEach(function (chip) {
+  chip.addEventListener("click", function () {
+    document.querySelectorAll("#reqChips .chip").forEach(function (c) { c.classList.remove("active"); });
+    chip.classList.add("active");
+    reqFilter = chip.dataset.f;
+    renderRequests();
+  });
+});
+renderRequests();
+
+// ═══════════ 自定义下拉工具 ═══════════
+var ACTION_OPTS = [
+  { v: "mask", t: "脱敏" },
+  { v: "block", t: "拦截" },
+  { v: "warn", t: "仅提醒" }
+];
+var CHEV = '<svg viewBox="0 0 12 12" fill="none"><path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+var CHECK = '<svg viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5L5 9l4.5-5.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function ddHtml(i, val) {
+  var cur = ACTION_OPTS.filter(function (o) { return o.v === val; })[0] || ACTION_OPTS[0];
+  var opts = ACTION_OPTS.map(function (o) {
+    return '<div class="dd-opt' + (o.v === val ? " sel" : "") + '" data-v="' + o.v + '"><span>' + o.t + "</span>" + (o.v === val ? CHECK : "") + "</div>";
+  }).join("");
+  return '<div class="dd" data-i="' + i + '"><button class="dd-btn" type="button"><span>' + cur.t + "</span>" + CHEV + '</button><div class="dd-menu">' + opts + "</div></div>";
+}
+function closeAllDd(root) {
+  root.querySelectorAll(".dd.open").forEach(function (el) { el.classList.remove("open"); });
+}
+// 找最近滚动祖先：浮层展开方向按它的边界判断，超出会被裁切
+function getScrollParent(el) {
+  var p = el.parentElement;
+  while (p) {
+    var oy = getComputedStyle(p).overflowY;
+    if (oy === "auto" || oy === "scroll") return p;
+    p = p.parentElement;
+  }
+  return null;
+}
+function flipIfNeeded(dd, menuH) {
+  var menu = dd.querySelector(".dd-menu");
+  var r = dd.getBoundingClientRect();
+  var sc = getScrollParent(dd);
+  var b = sc ? sc.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+  var spaceBelow = b.bottom - r.bottom - 8;
+  var spaceAbove = r.top - b.top - 8;
+  menu.classList.toggle("up", spaceBelow < menuH && spaceAbove > spaceBelow);
+}
+
+// ═══════════ 规则中心（mock） ═══════════
+var RULES = [
+  { name: "身份证号", hint: "18 位 + 校验位验证", on: true, action: "mask" },
+  { name: "手机号", hint: "1[3-9]\\d{9}", on: true, action: "mask" },
+  { name: "银行卡号", hint: "16~19 位 + Luhn 验证", on: true, action: "mask" },
+  { name: "邮箱", hint: "标准邮箱格式", on: true, action: "mask" },
+  { name: "API 密钥", hint: "sk-… / AKIA…", on: true, action: "mask" },
+  { name: "IP 地址", hint: "IPv4，排除本机地址", on: true, action: "warn" }
+];
+function renderRules() {
+  var grid = document.getElementById("ruleGrid");
+  grid.innerHTML = "";
+  RULES.forEach(function (r, i) {
+    var card = document.createElement("div");
+    card.className = "card rule-card";
+    card.innerHTML =
+      '<div class="rule-head"><span class="rule-name">' + r.name + '</span><button class="toggle ' + (r.on ? "on" : "") + '" data-i="' + i + '"></button></div>' +
+      '<div class="rule-regex">' + r.hint + "</div>" +
+      '<div class="rule-foot"><span class="muted">命中动作</span>' + ddHtml(i, r.action) + "</div>";
+    grid.appendChild(card);
+  });
+  grid.querySelectorAll(".toggle").forEach(function (t) {
+    t.addEventListener("click", function () { RULES[+t.dataset.i].on = !RULES[+t.dataset.i].on; renderRules(); });
+  });
+}
+// 下拉交互：事件委托（grid 容器不随渲染重建）
+document.getElementById("ruleGrid").addEventListener("click", function (e) {
+  var target = e.target;
+  var btn = target.closest ? target.closest(".dd-btn") : null;
+  var opt = target.closest ? target.closest(".dd-opt") : null;
+  var dd = target.closest ? target.closest(".dd") : null;
+  if (btn && dd) {
+    var wasOpen = dd.classList.contains("open");
+    closeAllDd(document.getElementById("ruleGrid"));
+    if (!wasOpen) {
+      flipIfNeeded(dd, ACTION_OPTS.length * 35 + 12);
+      dd.classList.add("open");
+    }
+    e.stopPropagation();
+  } else if (opt && dd) {
+    RULES[+dd.dataset.i].action = opt.dataset.v;
+    renderRules();
+  } else if (!dd) {
+    closeAllDd(document.getElementById("ruleGrid"));
+  }
+});
+document.addEventListener("click", function () {
+  closeAllDd(document.getElementById("ruleGrid"));
+});
+renderRules();
+
+// ═══════════ 其他交互 ═══════════
+document.querySelectorAll(".mode-card:not(.disabled)").forEach(function (c) {
+  c.addEventListener("click", function () {
+    document.querySelectorAll(".mode-card").forEach(function (m) { m.classList.remove("selected"); });
+    c.classList.add("selected");
+  });
+});
+document.getElementById("clearToggle").addEventListener("click", function () {
+  this.classList.toggle("on");
+});
+document.getElementById("installBtn").addEventListener("click", function () {
+  var btn = this;
+  btn.textContent = "安装中…"; btn.disabled = true;
+  setTimeout(function () { btn.textContent = "已安装 ✓"; btn.disabled = false; }, 900);
+});
+</script>
+</body>
+</html>
