@@ -1,9 +1,11 @@
 name: CI
 
-# 质量门：每次 push / PR 都跑前端构建、多语言自检与 Rust 全工作区测试，
-# 让类型错误与测试回归无法搭着某个 tag 直接进 Release。
-# 打包在 release.yml，端到端界面扫描（i18n:e2e）依赖真浏览器与 dev server，
-# 属本地可选验收，不放进 CI——放进来只会带来不稳定红灯，掩盖真实回归。
+# 质量门：每次 push / PR 都跑前端构建、多语言自检、Windows Rust 全工作区测试，
+# 以及 macOS / Linux 的**跨平台编译与测试**——让类型错误、测试回归与平台化腐烂
+# 都无法搭着某个 tag 直接进 Release。
+#
+# 端到端界面扫描（i18n:e2e）依赖真浏览器与 dev server，属本地可选验收，
+# 不放进 CI——放进来只会带来不稳定红灯，掩盖真实回归。
 on:
   push:
     branches: ["main"]
@@ -40,7 +42,7 @@ jobs:
         run: npm run i18n:locale
 
   rust:
-    name: Rust 全工作区测试
+    name: Rust 全工作区测试（Windows）
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -77,12 +79,24 @@ jobs:
 
       # 编译与运行分成两步：编译失败和测试失败在步骤名上就能区分开，
       # 不必去猜「到底是编不过还是测不过」。
+      # 编译失败也要自描述：注解任何人都能读，Actions 日志要仓库写权限。
       - name: 编译测试二进制
-        run: cargo test --workspace --no-run
+        shell: pwsh
+        run: |
+          $out = & cargo test --workspace --no-run 2>&1 | ForEach-Object { "$_" }
+          $code = $LASTEXITCODE
+          $out | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0) {
+            for ($i = 0; $i -lt $out.Count; $i++) {
+              $line = "$($out[$i])".Trim()
+              if ($line -match '^error' -or $line -match '^\s+-->') {
+                Write-Host "::error::$line"
+              }
+            }
+            exit $code
+          }
 
       # 失败时把「哪个用例挂了」和「为什么挂」都写成 Actions 注解。
-      # 动机：Actions 日志要仓库写权限才能下载，注解任何人都能读——
-      # 对没有权限的外部贡献者、以及对自动化排查都更友好。
       #
       # 2026-09-14 补记：旧版只 Select-String 'panicked at' 那一行，
       # 于是注解里只剩「在 commands.rs:1214 挂了」，**看不出为什么挂**——
@@ -113,3 +127,69 @@ jobs:
             }
             exit $code
           }
+
+  # 平台化不能只靠"本机能编过"：macOS / Linux 的系统 API 分派（钥匙串、
+  # networksetup、gsettings、/proc、lsof、pkexec…）只有在真平台上编译与运行
+  # 才被验证过。这两个 job 就是那层保护——没有它们，跨平台代码会在下一次
+  # Release 时才第一次被编译。
+  cross:
+    name: 跨平台编译与测试（${{ matrix.label }}）
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            label: macOS
+          - platform: ubuntu-22.04
+            label: Linux
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+
+      # Tauri 在 Linux 上依赖发行版的 WebKitGTK / 托盘库；缺一个就编不过。
+      - name: 安装 Linux 系统依赖
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: 占位 dist（满足 tauri-build 的存在性校验）
+        run: mkdir -p dist
+
+      - name: 编译检查（含测试目标，失败自描述）
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! cargo check --workspace --all-targets 2>&1 | tee /tmp/check.log; then
+            # 编译错误也要写成注解：日志要仓库写权限，注解任何人都能读
+            awk '/^error/{print "::error::"$0} /^warning: unused/{print "::error::"$0} /^ +--> /{print "::error::"$0}' \
+              /tmp/check.log | head -40
+            exit 1
+          fi
+
+      - name: 运行测试（失败自描述）
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! cargo test --workspace --no-fail-fast 2>&1 | tee /tmp/test.log; then
+            # 注解必须自带结论：只报「哪个用例挂了」不够，panic 的正文在下一行
+            awk '
+              /^test .+ \.\.\. FAILED/ { print "::error::" $0; next }
+              /panicked at/ {
+                print "::error::" $0
+                if (getline nxt) {
+                  gsub(/^[ \t]+|[ \t]+$/, "", nxt)
+                  if (nxt != "") print "::error::" nxt
+                }
+              }
+            ' /tmp/test.log | head -40
+            exit 1
+          fi

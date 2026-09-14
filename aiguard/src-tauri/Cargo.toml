@@ -37,6 +37,20 @@ bytes = "1"
 futures = "0.3"
 async-trait = "0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.11"
+hex = "0.4"
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1"
+
+# ─────────────────────── 平台专有依赖 ───────────────────────
+#
+# Windows 的两套系统绑定**必须**留在 target 段里：`winreg` 在非 Windows 上
+# 直接拒绝编译（crate 自身就只支持 Windows），`windows-sys` 虽能编译但所有
+# `Win32::*` 条目在非 Windows 上不存在。放在公共依赖里会让 macOS / Linux
+# 连 `cargo check` 都过不去。
+[target.'cfg(windows)'.dependencies]
 winreg = "0.56"
 windows-sys = { version = "0.61", features = [
     "Win32_Networking_WinInet",
@@ -51,9 +65,9 @@ windows-sys = { version = "0.61", features = [
     # （icacls / certutil / PowerShell 输出是系统代码页，不是 UTF-8）
     "Win32_Globalization",
    ] }
-uuid = { version = "1", features = ["v4"] }
-sha2 = "0.11"
-hex = "0.4"
-log = "0.4"
-env_logger = "0.11"
-anyhow = "1"
+
+# unix 侧只需要 libc 做两件事：
+#   - macOS 调试器检测（sysctl KERN_PROC_PID 取 p_flag 的 P_TRACED 位）
+#   - 其余（文件权限位、/proc 读取、lsof 调用）纯 std 即可
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

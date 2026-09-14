@@ -142,7 +142,45 @@ pub fn pid_listening_on(port: u16) -> Option<u32> {
     None
 }
 
-#[cfg(not(target_os = "windows"))]
+/// Linux：解析 `/proc/net/tcp` + `/proc/net/tcp6` 找监听该端口的 socket inode，
+/// 再在 `/proc/<pid>/fd` 里反查持有该 inode 的进程。
+#[cfg(target_os = "linux")]
+pub fn pid_listening_on(port: u16) -> Option<u32> {
+    for table in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        let Ok(text) = std::fs::read_to_string(table) else {
+            continue;
+        };
+        // TCP_LISTEN == 0x0A
+        let hit = parse_proc_net_tcp(&text)
+            .into_iter()
+            .find(|row| row.state == 0x0A && row.local.1 == port);
+        if let Some(row) = hit {
+            if let Some(pid) = pid_owning_socket(row.inode) {
+                return Some(pid);
+            }
+        }
+    }
+    None
+}
+
+/// macOS：`lsof` 查监听该端口的进程。
+///
+/// `-nP` 关掉主机名/端口名反查（否则每行都要过一次 DNS）；`-sTCP:LISTEN`
+/// 把匹配限于监听套接字。
+#[cfg(target_os = "macos")]
+pub fn pid_listening_on(port: u16) -> Option<u32> {
+    let out = std::process::Command::new("/usr/sbin/lsof")
+        .args(["-nP", "-t", &format!("-iTCP:{}", port), "-sTCP:LISTEN"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_lsof_pid_list(&crate::console::decode_console(&out.stdout))
+}
+
+/// 其它平台：查不到（返回 None 会让端口诊断退化为「bind 试探」）。
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 pub fn pid_listening_on(_port: u16) -> Option<u32> {
     None
 }
@@ -153,7 +191,51 @@ pub fn resolve_client_exe(client_addr: SocketAddr) -> Option<String> {
     exe_path_of_pid(pid)
 }
 
-#[cfg(not(target_os = "windows"))]
+/// Linux：在连接表里按「本端地址 == 客户端地址」找到那条连接，取 socket inode，
+/// 再反查 PID。（同一 `ip:port` 不可能被两个进程同时持有，所以本地端匹配即唯一。）
+#[cfg(target_os = "linux")]
+pub fn resolve_client_exe(client_addr: SocketAddr) -> Option<String> {
+    let std::net::IpAddr::V4(v4) = client_addr.ip() else {
+        return None;
+    };
+    for table in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        let Ok(text) = std::fs::read_to_string(table) else {
+            continue;
+        };
+        let hit = parse_proc_net_tcp(&text)
+            .into_iter()
+            .find(|row| row.local == (v4, client_addr.port()));
+        if let Some(row) = hit {
+            return pid_owning_socket(row.inode).and_then(exe_path_of_pid);
+        }
+    }
+    None
+}
+
+/// macOS：`lsof` 反查持有该本地端口的进程。
+///
+/// ⚠ 必须**剔除本进程自己**：代理侧那条连接的远端恰好就是客户端的 `ip:port`，
+/// 所以 `lsof -iTCP@<client>` 会同时列出客户端与本代理。不剔除的话，
+/// 进程黑白名单会把「代理自己」当成发起方——那是彻底错误的归因。
+#[cfg(target_os = "macos")]
+pub fn resolve_client_exe(client_addr: SocketAddr) -> Option<String> {
+    // `-iTCP@host:port` 匹配「任一端等于该地址」的套接字——这正是必须剔除
+    // 本进程的原因（见上面的注释）。
+    let selector = format!("-iTCP@{}:{}", client_addr.ip(), client_addr.port());
+    let out = std::process::Command::new("/usr/sbin/lsof")
+        .args(["-nP", "-t", &selector])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let me = std::process::id();
+    parse_lsof_pid_list(&crate::console::decode_console(&out.stdout))
+        .filter(|pid| *pid != me)
+        .and_then(exe_path_of_pid)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 pub fn resolve_client_exe(_client_addr: SocketAddr) -> Option<String> {
     None
 }
@@ -255,8 +337,146 @@ pub fn exe_path_of_pid(pid: u32) -> Option<String> {
     Some(String::from_utf16_lossy(&buf16[..len as usize]))
 }
 
-#[cfg(not(target_os = "windows"))]
+/// Linux：`/proc/<pid>/exe` 的符号链接目标（可执行文件完整路径）。
+#[cfg(target_os = "linux")]
+pub fn exe_path_of_pid(pid: u32) -> Option<String> {
+    let path = std::fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
+    Some(path.to_string_lossy().to_string())
+}
+
+/// macOS：`lsof -a -p <pid> -d txt -Fn` 里的 `n` 行即可执行文件完整路径。
+///
+/// ⚠ 必须配合 `-d txt` 使用：不加它时第一条 `n` 行往往是 cwd（`/`），
+/// 解析出来的就不是 exe 路径了。
+#[cfg(target_os = "macos")]
+pub fn exe_path_of_pid(pid: u32) -> Option<String> {
+    let out = std::process::Command::new("/usr/sbin/lsof")
+        .args(["-nP", "-a", "-p", &pid.to_string(), "-d", "txt", "-Fn"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_lsof_name_line(&crate::console::decode_console(&out.stdout))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 pub fn exe_path_of_pid(_pid: u32) -> Option<String> {
+    None
+}
+
+// ─────────── 纯解析（所有平台都编译，测试在所有平台都跑） ───────────
+//
+// 解析与系统调用分开：`/proc/net/tcp` 的行格式与 `lsof` 的输出格式都是
+// 「一旦写错就静默失准」的地方（进程黑名单会安静地永远不匹配），
+// 所以这两段必须能在本机（Windows）被单测覆盖，不能只靠 CI 上看不见的真机。
+
+/// `/proc/net/tcp{,6}` 的一行（只留我们关心的字段）。
+///
+/// `local_ip` 为 `None` 表示这行是 IPv6（tcp6 的地址写成 32 位 hex）：
+/// 端口仍可用于匹配监听者，但「按客户端 v4 地址反查连接」只认 v4 行。
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcNetRow {
+    local_ip: Option<std::net::Ipv4Addr>,
+    local_port: u16,
+    state: u16,
+    inode: u64,
+}
+
+/// 解析 `/proc/net/tcp` 里的 32 位 IPv4（**小端书写**：`127.0.0.1` → `0100007F`）。
+#[cfg(any(target_os = "linux", test))]
+fn parse_proc_hex_v4(hex: &str) -> Option<std::net::Ipv4Addr> {
+    if hex.len() != 8 {
+        return None;
+    }
+    let raw = u32::from_str_radix(hex, 16).ok()?;
+    let b = raw.to_le_bytes();
+    Some(std::net::Ipv4Addr::new(b[0], b[1], b[2], b[3]))
+}
+
+/// 解析 `/proc/net/tcp{,6}` 文本。
+///
+/// 行格式（空白分隔）：`sl local_address rem_address st tx:rx tr:when retrnsmt uid
+/// timeout inode …`。地址与端口是十六进制；**解析不出的行直接跳过**——表里会混入
+/// IPv6 形态与将来新增的列，不该因为一行读不懂就整表作废。
+#[cfg(any(target_os = "linux", test))]
+fn parse_proc_net_tcp(text: &str) -> Vec<ProcNetRow> {
+    let mut out = Vec::new();
+    for line in text.lines().skip(1) {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() < 10 {
+            continue;
+        }
+        let Some((addr_hex, port_hex)) = f[1].split_once(':') else {
+            continue;
+        };
+        let (Ok(local_port), Ok(state), Ok(inode)) = (
+            u16::from_str_radix(port_hex, 16),
+            u16::from_str_radix(f[3], 16),
+            f[9].parse::<u64>(),
+        ) else {
+            continue;
+        };
+        out.push(ProcNetRow {
+            local_ip: parse_proc_hex_v4(addr_hex),
+            local_port,
+            state,
+            inode,
+        });
+    }
+    out
+}
+
+/// Linux：在 `/proc/<pid>/fd` 里反查持有指定 socket inode 的进程。
+///
+/// 只看数字命名的 pid 目录；权限不足（其它用户的进程）直接跳过——
+/// 进程归因本就是「尽力而为」，查不到就不匹配黑白名单，绝不误拦。
+#[cfg(target_os = "linux")]
+fn pid_owning_socket(inode: u64) -> Option<u32> {
+    let target = format!("socket:[{}]", inode);
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(fds) = std::fs::read_dir(format!("/proc/{}/fd", pid)) else {
+            continue;
+        };
+        for fd in fds.flatten() {
+            if let Ok(link) = std::fs::read_link(fd.path()) {
+                if link.to_string_lossy() == target {
+                    return Some(pid);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// `lsof -t` 的输出：每行一个 PID，取第一个能解析的。
+#[cfg(any(target_os = "macos", test))]
+fn parse_lsof_pid_list(text: &str) -> Option<u32> {
+    text.lines()
+        .map(str::trim)
+        .find_map(|line| line.parse::<u32>().ok())
+}
+
+/// `lsof -Fn` 的输出：字段行用首字母标类型（`p`=PID / `f`=fd / `n`=名字），
+/// 可执行文件路径就是第一条 `n` 行。
+#[cfg(any(target_os = "macos", test))]
+fn parse_lsof_name_line(text: &str) -> Option<String> {
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix('n') {
+            let path = rest.trim();
+            if !path.is_empty() {
+                return Some(path.to_string());
+            }
+        }
+    }
     None
 }
 
@@ -285,5 +505,88 @@ mod tests {
     #[test]
     fn test_exe_path_of_pid_rejects_invalid_pid() {
         assert!(exe_path_of_pid(0).is_none(), "PID 0 不应解析出路径");
+    }
+}
+
+/// 解析层单测：**在所有平台都跑**。
+///
+/// 这两段解析写错不会有任何报错，只会让进程归因安静地失准
+/// （`resolve_client_exe` 永远 None → 进程黑白名单形同不存在）。
+/// 所以它们必须在开发机上就测到，而不是等 macOS / Linux 上的真机。
+#[cfg(test)]
+mod parse_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_proc_hex_v4_is_little_endian() {
+        // /proc/net/tcp 实测形态：127.0.0.1 写作 0100007F
+        assert_eq!(
+            parse_proc_hex_v4("0100007F"),
+            Some(std::net::Ipv4Addr::new(127, 0, 0, 1))
+        );
+        assert_eq!(
+            parse_proc_hex_v4("00000000"),
+            Some(std::net::Ipv4Addr::new(0, 0, 0, 0))
+        );
+        // IPv6 的 32 位 hex 地址 → 认不出 v4，返回 None（调用方跳过这一行）
+        assert_eq!(parse_proc_hex_v4("00000000000000000000000001000000"), None);
+        assert_eq!(parse_proc_hex_v4(""), None);
+        assert_eq!(parse_proc_hex_v4("ZZZZZZZZ"), None);
+    }
+
+    #[test]
+    fn test_parse_proc_net_tcp_reads_port_state_inode() {
+        // 真实表头 + 三条：一条监听 8888（0A）、一条 443 监听、一条 IPv6 行
+        let text = [
+            "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+            "   0: 0100007F:22B8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1234567 1 ffff 100 0 0 10 0",
+            "   1: 0100007F:01BB 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 7654321 1 ffff 100 0 0 10 0",
+            "   2: 00000000000000000000000000000000:22B8 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 9998887 1 ffff 100 0 0 10 0",
+            "",
+        ]
+        .join("\n");
+        let rows = parse_proc_net_tcp(&text);
+        assert_eq!(rows.len(), 3, "三行都应解析出来");
+
+        // 0x22B8 = 8888；0x0A = TCP_LISTEN
+        assert_eq!(rows[0].local_port, 8888);
+        assert_eq!(rows[0].state, 0x0A);
+        assert_eq!(rows[0].inode, 1234567);
+        assert_eq!(rows[0].local_ip, Some(std::net::Ipv4Addr::new(127, 0, 0, 1)));
+
+        // 0x01BB = 443
+        assert_eq!(rows[1].local_port, 443);
+
+        // IPv6 行：端口仍能取到，但地址认不出 → local_ip 为 None
+        assert_eq!(rows[2].local_port, 8888);
+        assert_eq!(rows[2].local_ip, None);
+
+        // 残缺行必须被跳过而不是 panic 或产出假数据
+        assert!(parse_proc_net_tcp("  sl  local_address\n  0: garbage\n").is_empty());
+        assert!(parse_proc_net_tcp("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_lsof_pid_list_takes_first_valid_pid() {
+        assert_eq!(parse_lsof_pid_list("1234\n"), Some(1234));
+        // lsof 偶尔会先打印告警行，必须跳过而不是整体失败
+        assert_eq!(parse_lsof_pid_list("lsof: WARNING: can't stat()\n5678\n"), Some(5678));
+        assert_eq!(parse_lsof_pid_list(""), None);
+        assert_eq!(parse_lsof_pid_list("no digits here\n"), None);
+    }
+
+    #[test]
+    fn test_parse_lsof_name_line_extracts_path() {
+        // `lsof -a -p 42 -d txt -Fn` 的实测形态：因为有 `-d txt`，
+        // 输出里只有文本段这一个 `n` 行，它就是可执行文件路径。
+        // （不配合 `-d txt` 时第一条 `n` 往往是 cwd —— `/`，会解析错。）
+        let text = "p42\nftxt\nn/Applications/AiGuard.app/Contents/MacOS/aiguard\n";
+        assert_eq!(
+            parse_lsof_name_line(text).as_deref(),
+            Some("/Applications/AiGuard.app/Contents/MacOS/aiguard")
+        );
+        // 只有类型行、没有名字行 → None
+        assert_eq!(parse_lsof_name_line("p42\nf1\n"), None);
+        assert_eq!(parse_lsof_name_line(""), None);
     }
 }

@@ -1,7 +1,10 @@
 name: Release
 
-# 推一个形如 v0.1.0 的 tag 触发打包并发布 GitHub Release；
+# 推一个形如 v0.1.0 的 tag 触发三平台打包并发布 GitHub Release；
 # 也可以在 Actions 页面手动 workflow_dispatch 触发（由 tauri-action 建 tag）。
+#
+# tag 名必须与 src-tauri/tauri.conf.json 的 version 一致（workflow 里用
+# `tagName: v__VERSION__` 表达这一约定，tauri-action 会用版本号替换 __VERSION__）。
 on:
   push:
     tags:
@@ -13,10 +16,29 @@ permissions:
 
 jobs:
   publish:
-    name: 打包并发布（Windows x64）
-    runs-on: windows-latest
+    name: 打包并发布（${{ matrix.label }}）
+    runs-on: ${{ matrix.platform }}
     permissions:
       contents: write
+    strategy:
+      # 一个平台失败不要掐掉其它平台：用户至少能拿到已成功的那份产物
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            label: Windows x64
+            args: "--bundles nsis,msi"
+            targets: ""
+          # 一个 job 出 universal（arm64 + x86_64 合并）安装包，
+          # 避免依赖 Intel runner 的标签可用性（macos-13 已逐步退役）。
+          - platform: macos-latest
+            label: macOS universal（Apple Silicon + Intel）
+            args: "--target universal-apple-darwin --bundles dmg"
+            targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          - platform: ubuntu-22.04
+            label: Linux x64
+            args: "--bundles deb,appimage"
+            targets: ""
     steps:
       - uses: actions/checkout@v7
 
@@ -26,8 +48,21 @@ jobs:
           cache: "npm"
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
 
       - uses: swatinem/rust-cache@v2
+
+      # Tauri 在 Linux 上依赖发行版的 WebKitGTK / 托盘库；缺一个就编不过。
+      - name: 安装 Linux 系统依赖
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
       - name: 安装前端依赖
         run: npm ci
@@ -48,12 +83,26 @@ jobs:
             - 请求侧脱敏：6 类内置规则（身份证 / 手机号 / 银行卡 / 邮箱 / API Key / IP），命中替换为可还原占位符
             - 响应侧流式还原：SSE 逐帧还原，前瞻缓冲处理占位符被拆 chunk
             - 七大防护信号：报错泄密 / 模型偷换 / 复读篡改 / 流式异常 / 响应夹带 / 记忆残留 / 高危指令
-            - 黑 / 白名单：域名与进程双向匹配，进程经本机 TCP 连接表反解 exe 路径
+            - 黑 / 白名单：域名与进程双向匹配，进程经本机连接表反解可执行文件路径
             - 中英双语界面、首次运行向导、全局快捷键、默认关闭的更新检查
 
-            **安装说明**
-            - 下载 `.exe`（NSIS 安装向导）或 `.msi`
-            - 安装包未做代码签名，首次运行可能出现 SmartScreen 提示，点「仍要运行」即可
+            **按平台选择安装包**
+
+            | 平台 | 产物 | 说明 |
+            |---|---|---|
+            | Windows | `*-setup.exe`（NSIS 向导）/ `*.msi` | 未做代码签名，首次运行可能出现 SmartScreen 提示，点「仍要运行」即可 |
+            | macOS | `*.dmg`（universal：Apple Silicon + Intel） | 未签名 / 未公证，首次打开请右键「打开」；系统会弹一次「无法验证开发者」 |
+            | Linux | `*.deb` / `*.AppImage` | AppImage `chmod +x` 后直接运行；deb 需 WebKitGTK 运行库 |
+
+            **平台差异（如实说明）**
+            - **Windows 功能最完整**：系统代理（注册表 + WinINET）、根证书（certutil）、hosts 提权（UAC）、
+              CA 私钥 DPAPI 加密、数据目录 ACL 检查、进程归因（连接表反查）。
+            - **macOS**：系统代理走 `networksetup`、根证书走 `security add-trusted-cert`、
+              钥匙串存 CA 私钥、hosts 提权走 osascript 授权框、进程归因走 `lsof`。
+            - **Linux**：系统代理走 GNOME `gsettings`（非 GNOME 桌面需手动配 PAC）、
+              根证书走 NSS 用户库 / 系统信任库（需 polkit 授权）、hosts 提权走 `pkexec`；
+              CA 私钥**没有系统级密钥库可用，以明文落盘并收紧到 0600**（加固面板会如实显示）。
+            - 443 透明层（hosts 模式）在三个平台都需要管理员 / root 权限才能监听。
 
             **隐私红线**：敏感原文只存在于本机内存的会话映射中，日志与审计事件只含类型 / 长度 / 摘要 / 哈希，
             任何环节不落盘原文、不上传任何数据。
@@ -61,3 +110,4 @@ jobs:
             完整说明见 [README](https://github.com/Technicalflight/AiGuard#readme)。
           releaseDraft: false
           prerelease: false
+          args: ${{ matrix.args }}

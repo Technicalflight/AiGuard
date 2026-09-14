@@ -11,6 +11,12 @@ use std::path::Path;
 /// 加密私钥文件的魔数头（明文 PEM 不含它 → 旧文件可被自动识别并迁移）。
 pub const KEY_MAGIC: &[u8] = b"AIGUARD-DPAPI-1\n";
 
+/// macOS 钥匙串指针文件的魔数头。
+///
+/// 这不是密文本身：文件里只有 `魔数 + 账户名 + 换行`，私钥真身存在 login keychain 里。
+/// 这样私钥文件即使被同步/备份/误拷贝，读到的也只是一个账户名。
+pub const KEYCHAIN_MAGIC: &[u8] = b"AIGUARD-KEYCHAIN-1\n";
+
 // ─────────────────────────── 调试器检测 ───────────────────────────
 
 /// 当前进程是否被调试器附加（Windows：IsDebuggerPresent + CheckRemoteDebuggerPresent）。
@@ -37,8 +43,55 @@ pub fn debugger_attached() -> bool {
     }
 }
 
-/// 非 Windows：不做额外检测（本项目仅发布 Windows 版）。
-#[cfg(not(target_os = "windows"))]
+/// Linux：读 `/proc/self/status` 的 `TracerPid`（被 ptrace 附加时非 0）。
+///
+/// 与 Windows 侧同一定位：**只检测、只告警**，不做反调试对抗。
+/// 读不到文件（受限容器等）一律降级为「未检测到」，绝不阻断主流程。
+#[cfg(target_os = "linux")]
+pub fn debugger_attached() -> bool {
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return false;
+    };
+    for line in status.lines() {
+        if let Some(v) = line.strip_prefix("TracerPid:") {
+            return v.trim().parse::<u32>().map(|pid| pid != 0).unwrap_or(false);
+        }
+    }
+    false
+}
+
+/// macOS：`sysctl(KERN_PROC_PID)` 取自身 `kinfo_proc`，看 `p_flag` 的 `P_TRACED` 位。
+///
+/// 调用失败（权限、接口变化）一律降级为「未检测到」——加固检查的通用原则是
+/// 「失败降级为未知、只告警不阻断」。
+#[cfg(target_os = "macos")]
+pub fn debugger_attached() -> bool {
+    let mut info: libc::kinfo_proc = unsafe { std::mem::zeroed() };
+    let mut size = std::mem::size_of::<libc::kinfo_proc>() as libc::size_t;
+    let mut mib = [
+        libc::CTL_KERN,
+        libc::KERN_PROC,
+        libc::KERN_PROC_PID,
+        std::process::id() as libc::c_int,
+    ];
+    let rc = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            std::ptr::addr_of_mut!(info).cast::<libc::c_void>(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || size == 0 {
+        return false;
+    }
+    info.kp_proc.p_flag & libc::P_TRACED != 0
+}
+
+/// 其它平台（本项目未发布）：不做额外检测。
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 pub fn debugger_attached() -> bool {
     false
 }
@@ -136,7 +189,7 @@ pub fn dpapi_unprotect(_blob: &[u8]) -> Option<Vec<u8>> {
 /// 私钥文件的落盘状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyAtRest {
-    /// 已用 DPAPI 加密（仅当前用户可解）
+    /// 已由系统密钥库保护（Windows DPAPI / macOS 钥匙串）
     Encrypted,
     /// 明文 PEM 落盘
     Plaintext,
@@ -144,61 +197,216 @@ pub enum KeyAtRest {
     Absent,
 }
 
+/// 私钥文件里实际存的是什么形态。
+///
+/// 三个平台各有一种，靠魔数区分——**纯函数，任何平台都可单测**：
+/// 平台差异只在「取出真身」那一步，识别逻辑不掺平台条件。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum KeyStorage {
+    /// Windows：DPAPI 密文（魔数 + 密文）
+    Dpapi,
+    /// macOS：钥匙串指针（魔数 + 账户名，真身在 login keychain）
+    Keychain(String),
+    /// 明文 PEM
+    Plain,
+}
+
+fn sniff_key_storage(bytes: &[u8]) -> KeyStorage {
+    if bytes.starts_with(KEY_MAGIC) {
+        return KeyStorage::Dpapi;
+    }
+    if let Some(rest) = bytes.strip_prefix(KEYCHAIN_MAGIC) {
+        let account = String::from_utf8_lossy(rest).trim().to_string();
+        if !account.is_empty() {
+            return KeyStorage::Keychain(account);
+        }
+    }
+    KeyStorage::Plain
+}
+
 /// 读取私钥文件的落盘保护状态（只看文件头魔数，不解密）。
 pub fn ca_key_at_rest(key_path: &Path) -> KeyAtRest {
     match std::fs::read(key_path) {
-        Ok(bytes) => {
-            if bytes.starts_with(KEY_MAGIC) {
-                KeyAtRest::Encrypted
-            } else {
-                KeyAtRest::Plaintext
-            }
-        }
+        Ok(bytes) => match sniff_key_storage(&bytes) {
+            KeyStorage::Dpapi | KeyStorage::Keychain(_) => KeyAtRest::Encrypted,
+            KeyStorage::Plain => KeyAtRest::Plaintext,
+        },
         Err(_) => KeyAtRest::Absent,
     }
 }
 
-/// 保存 CA 私钥：优先 DPAPI 加密落盘；DPAPI 不可用时回退明文并告警。
+/// 写出私钥文件，并在 unix 上把权限收紧到 0600。
+///
+/// 明文落盘是**兜底**（平台没有系统密钥库时）：此时文件权限就是唯一的防线，
+/// 因此必须显式 `set_permissions`——`fs::write` 建出来的文件受 umask 影响，
+/// 宽松 umask（如 000）下会默认 0666，同机其它账户可读。
+fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+// ── macOS 钥匙串（等价于 Windows 的 DPAPI「仅当前用户可解」） ──
+
+/// 钥匙串条目的服务名（与 `tauri.conf.json` 的 identifier 对齐）。
+#[cfg(target_os = "macos")]
+const KEYCHAIN_SERVICE: &str = "com.technicalflight.aiguard.ca-key";
+
+/// 把私钥写进 login keychain。
+///
+/// ⚠ 密钥经 `-w` 参数传入，在进程存活的那一瞬间会出现在 `ps` 的参数里。
+/// 这是 `security` 命令行工具唯一支持的非交互传值方式（交互式提示在 GUI
+/// 子进程里不可用）；同一台机器上的单用户桌面场景可接受，且窗口极短。
+#[cfg(target_os = "macos")]
+fn keychain_store(account: &str, secret: &str) -> Result<(), String> {
+    let out = std::process::Command::new("security")
+        .args([
+            "add-generic-password",
+            "-U", // 已存在则更新，保证幂等
+            "-a",
+            account,
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-w",
+            secret,
+        ])
+        .output()
+        .map_err(|e| format!("无法调用 security 命令: {}", crate::state::safe_err(&e)))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = crate::console::decode_console(&out.stderr);
+    let msg: String = err.trim().lines().next().unwrap_or("").chars().take(160).collect();
+    Err(if msg.is_empty() {
+        "security add-generic-password 失败（未见错误详情）".to_string()
+    } else {
+        msg
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_load(account: &str) -> Option<String> {
+    let out = std::process::Command::new("security")
+        .args([
+            "find-generic-password",
+            "-a",
+            account,
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-w",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let pem = crate::console::decode_console(&out.stdout)
+        .trim_end_matches(['\n', '\r'])
+        .to_string();
+    if pem.is_empty() {
+        None
+    } else {
+        Some(pem)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keychain_load(_account: &str) -> Option<String> {
+    None
+}
+
+/// 钥匙串条目的账户名：由私钥文件路径派生。
+///
+/// 用路径而不是固定串，是为了让「同一台机器上的多个数据目录（多份配置）」
+/// 各存各的，不会互相覆盖。
+#[cfg(target_os = "macos")]
+fn keychain_account(key_path: &Path) -> String {
+    use sha1::{Digest as _, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(key_path.to_string_lossy().as_bytes());
+    format!("ca-{}", hex::encode(&hasher.finalize()[..6]))
+}
+
+/// 保存 CA 私钥：优先交给系统密钥库，不可用时回退明文 + 0600 并告警。
+///
+/// 平台分工：
+/// - Windows → DPAPI（当前用户范围加密）
+/// - macOS   → login keychain（文件里只留一个账户名指针）
+/// - Linux   → 没有可靠的系统级密钥库（libsecret 需要桌面会话与守护进程，
+///   服务端/最小安装上不存在），因此**如实**明文落盘 + 0600，
+///   并由 `ca_key_at_rest` 把这一事实回报给加固面板。
 ///
 /// 返回是否成功加密（`false` = 明文落盘）。
 pub fn save_ca_key(key_path: &Path, pem: &str) -> std::io::Result<bool> {
-    if let Some(blob) = dpapi_protect(pem.as_bytes()) {
-        let mut buf = Vec::with_capacity(KEY_MAGIC.len() + blob.len());
-        buf.extend_from_slice(KEY_MAGIC);
-        buf.extend_from_slice(&blob);
-        std::fs::write(key_path, &buf)?;
-        return Ok(true);
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(blob) = dpapi_protect(pem.as_bytes()) {
+            let mut buf = Vec::with_capacity(KEY_MAGIC.len() + blob.len());
+            buf.extend_from_slice(KEY_MAGIC);
+            buf.extend_from_slice(&blob);
+            write_private_file(key_path, &buf)?;
+            return Ok(true);
+        }
+        log::warn!("DPAPI 不可用，CA 私钥将以明文落盘（文件权限 0600）");
     }
-    log::warn!("DPAPI 不可用，CA 私钥将以明文落盘（仅当前用户数据目录）");
-    std::fs::write(key_path, pem.as_bytes())?;
+    #[cfg(target_os = "macos")]
+    {
+        let account = keychain_account(key_path);
+        if keychain_store(&account, pem).is_ok() {
+            let mut pointer = KEYCHAIN_MAGIC.to_vec();
+            pointer.extend_from_slice(account.as_bytes());
+            pointer.push(b'\n');
+            write_private_file(key_path, &pointer)?;
+            return Ok(true);
+        }
+        log::warn!("钥匙串不可用，CA 私钥将以明文落盘（文件权限 0600）");
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        log::warn!("当前平台没有系统密钥库，CA 私钥以明文落盘，依赖文件权限 0600 保护");
+    }
+    write_private_file(key_path, pem.as_bytes())?;
     Ok(false)
 }
 
-/// 载入 CA 私钥 PEM（自动识别密文/明文）。
+/// 载入 CA 私钥 PEM（自动识别密文 / 钥匙串指针 / 明文）。
 ///
-/// 明文文件会被**就地迁移**为 DPAPI 密文（内容不变 → 证书指纹不变，
+/// 明文文件会被**就地迁移**为平台密文形态（内容不变 → 证书指纹不变，
 /// 已安装进系统信任库的 CA 不会失配）；迁移失败只告警，仍返回明文内容。
 pub fn load_ca_key_pem(key_path: &Path) -> anyhow::Result<String> {
     let bytes = std::fs::read(key_path)
         .map_err(|e| anyhow::anyhow!("读取 CA 私钥失败: {}", crate::state::safe_err(&e)))?;
-    if bytes.starts_with(KEY_MAGIC) {
-        let blob = &bytes[KEY_MAGIC.len()..];
-        let plain = dpapi_unprotect(blob).ok_or_else(|| {
-            anyhow::anyhow!("CA 私钥解密失败（密文由其它用户账户加密？请重新生成证书）")
-        })?;
-        let pem = String::from_utf8(plain)
-            .map_err(|_| anyhow::anyhow!("CA 私钥内容不是合法 UTF-8"))?;
-        return Ok(pem);
+    match sniff_key_storage(&bytes) {
+        KeyStorage::Dpapi => {
+            let blob = &bytes[KEY_MAGIC.len()..];
+            let plain = dpapi_unprotect(blob).ok_or_else(|| {
+                anyhow::anyhow!("CA 私钥解密失败（密文由其它用户账户加密？请重新生成证书）")
+            })?;
+            let pem = String::from_utf8(plain)
+                .map_err(|_| anyhow::anyhow!("CA 私钥内容不是合法 UTF-8"))?;
+            Ok(pem)
+        }
+        KeyStorage::Keychain(account) => {
+            let pem = keychain_load(&account).ok_or_else(|| {
+                anyhow::anyhow!("从系统钥匙串读取 CA 私钥失败（条目被删除或钥匙串已锁定？请重新生成证书）")
+            })?;
+            Ok(pem)
+        }
+        KeyStorage::Plain => {
+            let pem = String::from_utf8(bytes.clone())
+                .map_err(|_| anyhow::anyhow!("CA 私钥内容不是合法 UTF-8"))?;
+            match save_ca_key(key_path, &pem) {
+                Ok(true) => log::info!("CA 私钥已就地迁移为系统密钥库保护（证书本身未变）"),
+                Ok(false) => {}
+                Err(e) => log::warn!("CA 私钥加密迁移失败（保留明文）: {}", crate::state::safe_err(&e)),
+            }
+            Ok(pem)
+        }
     }
-    // 明文（旧版本落盘格式）：先读出内容，再尝试迁移为密文
-    let pem = String::from_utf8(bytes.clone())
-        .map_err(|_| anyhow::anyhow!("CA 私钥内容不是合法 UTF-8"))?;
-    match save_ca_key(key_path, &pem) {
-        Ok(true) => log::info!("CA 私钥已就地迁移为 DPAPI 密文（证书本身未变）"),
-        Ok(false) => {}
-        Err(e) => log::warn!("CA 私钥加密迁移失败（保留明文）: {}", crate::state::safe_err(&e)),
-    }
-    Ok(pem)
 }
 
 // ───────────────────── 落库密钥（代理令牌）的加密编码 ─────────────────────
@@ -328,6 +536,11 @@ pub struct DirAcl {
 }
 
 /// 一条访问控制项（主体 + 权限串）。
+///
+/// `icacls` 是 Windows 专有的：这里整段（含下面三条解析规则）只在 Windows 构建里
+/// 参与编译，**但测试在所有平台都跑**——解析是纯文本逻辑，在 macOS / Linux 上
+/// 同样能把「主体名含空格被截断」这类回归测出来。
+#[cfg(any(target_os = "windows", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AceEntry {
     subject: String,
@@ -347,6 +560,7 @@ struct AceEntry {
 ///    `Mandatory Label\Medium Mandatory Level`），因此剥离路径之后必须
 ///    取**整段**作为主体——绝不能"取最后一个空白分词"（会把
 ///    `NT AUTHORITY\SYSTEM` 截成 `AUTHORITY\SYSTEM`）。
+#[cfg(any(target_os = "windows", test))]
 fn parse_ace_entries(text: &str, path_prefix: &str) -> Vec<AceEntry> {
     let mut out = Vec::new();
     for raw in text.lines() {
@@ -375,6 +589,7 @@ fn parse_ace_entries(text: &str, path_prefix: &str) -> Vec<AceEntry> {
 ///
 /// 必须按**完整主体名**判定：`CodexSandboxUsers` 以 `Users` 结尾但它是一个
 /// 自定义沙箱组（子串匹配 "Users:" 会把它误判成"同机其它账户可访问"）。
+#[cfg(any(target_os = "windows", test))]
 fn is_broad_subject(subject: &str) -> bool {
     let s = subject.trim().trim_start_matches('\\').to_ascii_lowercase();
     let tail = s.rsplit('\\').next().unwrap_or(s.as_str());
@@ -389,6 +604,7 @@ fn is_broad_subject(subject: &str) -> bool {
 /// 权限串形如 `(I)(OI)(CI)(F)`；同一括号内可能是逗号分隔的组合权限
 /// （`(R,W)`），因此逐括号拆 token 判定，而不是子串匹配——
 /// 子串匹配会把 `(NW)`（no-write-up，来自强制完整性标签）里的 `W` 误当写权限。
+#[cfg(any(target_os = "windows", test))]
 fn has_write(perms: &str) -> bool {
     for grp in perms.split('(').skip(1) {
         let inner = grp.split(')').next().unwrap_or("");
@@ -405,6 +621,7 @@ fn has_write(perms: &str) -> bool {
 ///
 /// `path_prefix` 是调用 `icacls` 时传入的路径（生产路径下是 `.`），
 /// 用于剥掉 `icacls` 在首行重复回显的路径。
+#[cfg(any(target_os = "windows", test))]
 pub fn parse_icacls_text_with_prefix(text: &str, path_prefix: &str) -> DirAcl {
     let entries = parse_ace_entries(text, path_prefix);
     if entries.is_empty() {
@@ -450,12 +667,89 @@ pub fn parse_icacls_text(text: &str) -> DirAcl {
     parse_icacls_text_with_prefix(text, ".")
 }
 
-/// 读取并评估数据目录的 ACL。
+/// 读取并评估数据目录的权限范围（Windows：`icacls`；unix：权限位）。
+pub fn data_dir_acl(dir: &Path) -> DirAcl {
+    #[cfg(target_os = "windows")]
+    {
+        return windows_dir_acl(dir);
+    }
+    #[cfg(unix)]
+    {
+        return unix_dir_acl(dir);
+    }
+    #[cfg(not(any(target_os = "windows", unix)))]
+    {
+        let _ = dir;
+        DirAcl {
+            scope: "unknown".to_string(),
+            detail: "当前平台未实现目录权限评估".to_string(),
+        }
+    }
+}
+
+/// 纯函数：由 unix 权限位判定数据目录范围（便于单测，不碰系统调用）。
 ///
-/// `icacls` 在中文 Windows 上输出的是**系统代码页（GBK）字节**，必须经
+/// 语义与 Windows 侧对齐，回答的是同一个问题：「本用户之外的账户能不能进来」。
+/// **只要组或其它用户有任何一位权限就算 shared**，读写都算——数据目录里放着
+/// CA 私钥、会话映射表与审计库，同机其它账户连读都不该有。
+#[cfg(any(unix, test))]
+pub fn parse_unix_mode(mode: u32) -> DirAcl {
+    let bits = format!("{:04o}", mode & 0o7777);
+    let symbolic = symbolic_mode(mode);
+    if mode & 0o077 == 0 {
+        DirAcl {
+            scope: "user_only".to_string(),
+            detail: format!("权限位 {}（{}）；同组与其它账户无任何权限", bits, symbolic),
+        }
+    } else {
+        DirAcl {
+            scope: "shared".to_string(),
+            detail: format!(
+                "权限位 {}（{}）：同组或其它账户可访问，建议 chmod 700 收紧",
+                bits, symbolic
+            ),
+        }
+    }
+}
+
+/// `0700` → `rwx------`（只看低 9 位；setuid/setgid/sticky 不参与判定）。
+#[cfg(any(unix, test))]
+fn symbolic_mode(mode: u32) -> String {
+    const CHARS: [(u32, char); 9] = [
+        (0o400, 'r'),
+        (0o200, 'w'),
+        (0o100, 'x'),
+        (0o040, 'r'),
+        (0o020, 'w'),
+        (0o010, 'x'),
+        (0o004, 'r'),
+        (0o002, 'w'),
+        (0o001, 'x'),
+    ];
+    let mut out = String::with_capacity(9);
+    for (bit, ch) in CHARS {
+        out.push(if mode & bit != 0 { ch } else { '-' });
+    }
+    out
+}
+
+#[cfg(unix)]
+fn unix_dir_acl(dir: &Path) -> DirAcl {
+    use std::os::unix::fs::PermissionsExt;
+    match std::fs::metadata(dir) {
+        Ok(md) => parse_unix_mode(md.permissions().mode()),
+        Err(e) => DirAcl {
+            scope: "unknown".to_string(),
+            detail: format!("无法读取数据目录权限: {}", crate::state::safe_err(&e)),
+        },
+    }
+}
+
+/// Windows：`icacls` 在中文系统上输出的是**系统代码页（GBK）字节**，必须经
 /// [`crate::console::decode_console`] 解码，否则本地化页脚会变成乱码方块。
 /// 无法执行 `icacls` 时返回 unknown（不阻断）。
-pub fn data_dir_acl(dir: &Path) -> DirAcl {
+#[cfg(target_os = "windows")]
+fn windows_dir_acl(dir: &Path) -> DirAcl {
     let out = match run_icacls(dir) {
         Ok(o) => o,
         Err(e) => {
@@ -499,15 +793,13 @@ pub fn data_dir_acl(dir: &Path) -> DirAcl {
 /// `icacls` 会在首行回显路径，传 `.` 时那句话就是 `. SUBJECT:(F)`，
 /// 主体可以无歧义地整段取出——绝对路径里可能含空格，文本上无法与主体切分。
 /// `Command` 上禁止弹出控制台窗口（Windows GUI 子进程调用会闪黑框）。
+#[cfg(target_os = "windows")]
 fn run_icacls(dir: &Path) -> std::io::Result<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
     let mut cmd = std::process::Command::new("icacls");
-    cmd.current_dir(dir).arg(".");
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    cmd.current_dir(dir).arg(".").creation_flags(CREATE_NO_WINDOW);
     cmd.output()
 }
 
@@ -719,5 +1011,104 @@ mod tests {
     fn test_parse_icacls_garbage_is_unknown() {
         assert_eq!(parse_icacls_text("").scope, "unknown");
         assert_eq!(parse_icacls_text("random text without acl").scope, "unknown");
+    }
+
+    /// unix 权限位判定：**只要组/其它账户有一位权限就是 shared**。
+    ///
+    /// 这里特意把「只读」的两种形态也钉住（`0704` 其它账户可读、`0750` 组可读）：
+    /// 数据目录里有 CA 私钥、会话映射与审计库，同机其它账户连读都不该有。
+    #[test]
+    fn test_parse_unix_mode_scope() {
+        let only = parse_unix_mode(0o700);
+        assert_eq!(only.scope, "user_only", "{}", only.detail);
+        assert!(only.detail.contains("0700"), "{}", only.detail);
+        assert!(only.detail.contains("rwx------"), "{}", only.detail);
+
+        assert_eq!(parse_unix_mode(0o704).scope, "shared", "其它账户可读也算共享");
+        assert_eq!(parse_unix_mode(0o750).scope, "shared", "组可读也算共享");
+        assert_eq!(parse_unix_mode(0o770).scope, "shared");
+        assert_eq!(parse_unix_mode(0o777).scope, "shared");
+        let shared = parse_unix_mode(0o750);
+        assert!(shared.detail.contains("0750") && shared.detail.contains("rwxr-x---"), "{}", shared.detail);
+    }
+
+    /// 三种落盘形态必须靠魔数区分开——平台差异只在「取出真身」那一步。
+    #[test]
+    fn test_sniff_key_storage_distinguishes_three_forms() {
+        assert_eq!(sniff_key_storage(KEY_MAGIC), KeyStorage::Dpapi);
+        let mut dpapi = KEY_MAGIC.to_vec();
+        dpapi.extend_from_slice(&[1, 2, 3]);
+        assert_eq!(sniff_key_storage(&dpapi), KeyStorage::Dpapi);
+
+        let mut pointer = KEYCHAIN_MAGIC.to_vec();
+        pointer.extend_from_slice(b"ca-abcdef123456\n");
+        assert_eq!(
+            sniff_key_storage(&pointer),
+            KeyStorage::Keychain("ca-abcdef123456".to_string())
+        );
+
+        // 只有魔数、没有账户名 → 认不出来，按明文处理。
+        // 宁可当明文重读一次，也绝不能静默当成「已加密」（那会把私钥弄丢）。
+        assert_eq!(sniff_key_storage(KEYCHAIN_MAGIC), KeyStorage::Plain);
+        assert_eq!(
+            sniff_key_storage(b"-----BEGIN PRIVATE KEY-----\n"),
+            KeyStorage::Plain
+        );
+    }
+
+    /// 钥匙串指针文件在加固面板里必须显示为「已加密」而不是「明文」。
+    #[test]
+    fn test_key_at_rest_reports_keychain_pointer_as_encrypted() {
+        let dir = std::env::temp_dir().join(format!("aiguard_kc_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = dir.join("ca.key");
+        let mut pointer = KEYCHAIN_MAGIC.to_vec();
+        pointer.extend_from_slice(b"ca-001122334455\n");
+        std::fs::write(&key, &pointer).unwrap();
+        assert_eq!(ca_key_at_rest(&key), KeyAtRest::Encrypted);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// unix：私钥文件权限必须是 0600。
+    ///
+    /// 平台没有系统密钥库时（Linux），文件权限是**唯一**防线；而 `fs::write` 建出来的
+    /// 文件受 umask 影响，宽松 umask 下会默认 0666 → 同机其它账户可读。
+    #[cfg(unix)]
+    #[test]
+    fn test_key_file_mode_is_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("aiguard_mode_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = dir.join("ca.key");
+        let pem = "-----BEGIN PRIVATE KEY-----\nZmFrZS1rZXk=\n-----END PRIVATE KEY-----\n";
+        let _ = save_ca_key(&key, pem);
+        let mode = std::fs::metadata(&key).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "私钥文件权限必须收紧到 0600，实际 {:04o}", mode);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// macOS：钥匙串往返（等价于 Windows 的 DPAPI 往返）。
+    ///
+    /// CI 上的钥匙串状态不可控（未解锁 / 无登录会话），因此存不进去就跳过——
+    /// 与 GBK 那两条测试按代码页跳过是同一个道理。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_keychain_roundtrip() {
+        let account = "aiguard-test-roundtrip";
+        let pem = "-----BEGIN PRIVATE KEY-----\nZmFrZS1rZXk=\n-----END PRIVATE KEY-----\n";
+        if keychain_store(account, pem).is_err() {
+            eprintln!("钥匙串不可用，跳过往返测试");
+            return;
+        }
+        assert_eq!(keychain_load(account).as_deref(), Some(pem));
+        let _ = std::process::Command::new("security")
+            .args([
+                "delete-generic-password",
+                "-a",
+                account,
+                "-s",
+                KEYCHAIN_SERVICE,
+            ])
+            .output();
     }
 }

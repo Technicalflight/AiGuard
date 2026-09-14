@@ -14,6 +14,8 @@ AI 回复到达后，在本地流式还原为真实数据 —— **原文永不�
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4?logo=windows11&logoColor=white)
+![Platform](https://img.shields.io/badge/macOS-10.15%2B%20%28universal%29-000000?logo=apple&logoColor=white)
+![Platform](https://img.shields.io/badge/Linux-x64%20%28deb%20%2F%20AppImage%29-FCC624?logo=linux&logoColor=black)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-important.svg?logo=gnu)](./LICENSE)
 [![License: Commercial](https://img.shields.io/badge/License-Commercial%20Contact-white.svg?logo=github)](https://github.com/Technicalflight/AiGuard/issues)
 
@@ -33,7 +35,7 @@ AiGuard 是一个**本地优先**的 AI 流量安全网关：以系统代理 + �
 ### 🔁 本机 MITM 反向代理
 - 基于 **系统代理 + PAC** 自动接管：仅 AI 域名流量进入守护管道，其余流量直连不受影响
 - 覆盖 OpenAI / Anthropic / DeepSeek / Moonshot / 智谱 等主流 AI 服务的 **API 与网页端**域名
-- 使用自签根证书解密 HTTPS，证书由设置页**一键安装**（certutil 装入当前用户存储，无需管理员权限），随时可撤销
+- 使用自签根证书解密 HTTPS，证书由设置页**一键安装**（装入当前用户级信任库，无需管理员权限），随时可撤销
 
 ### 🕵️ 请求侧敏感信息脱敏
 - 内置 **6 类检测规则**：身份证 / 手机号 / 银行卡 / 邮箱 / API Key / IP 地址
@@ -161,16 +163,48 @@ flowchart LR
 | 依赖 | 版本 |
 |---|---|
 | Windows | 10 / 11（x64） |
-| Rust（MSVC 工具链） | 1.77+ |
+| macOS | 10.15+（universal：Apple Silicon 与 Intel 一体） |
+| Linux | x64（deb / AppImage；需 WebKitGTK 4.1 运行库） |
+| Rust（MSVC / Xcode CLT / gcc） | 1.77+ |
 | Node.js | 18+ |
 | WebView2 Runtime | Win11 一般自带 |
 
 ### 下载安装
 
-前往 [Releases](https://github.com/Technicalflight/AiGuard/releases) 页面下载安装包（Windows `.exe` / `.msi`）。
+前往 [Releases](https://github.com/Technicalflight/AiGuard/releases) 页面按平台下载：
+
+| 平台 | 产物 |
+|---|---|
+| Windows | `*-setup.exe`（NSIS 向导）、`*.msi` |
+| macOS | `*.dmg`（universal，Apple Silicon 与 Intel 通用） |
+| Linux | `*.deb`、`*.AppImage` |
 
 > [!NOTE]
-> 安装包暂未做代码签名，Windows 首次运行可能出现 SmartScreen 提示，点「仍要运行」即可。
+> 安装包暂未做代码签名：Windows 首次运行可能出现 SmartScreen 提示，点「仍要运行」即可；
+> macOS 首次打开请**右键 → 打开**（或在「系统设置 → 隐私与安全性」里放行）；
+> Linux 的 AppImage 需要 `chmod +x` 后运行。
+
+### 平台差异
+
+守护核心（MITM 代理、脱敏、流式还原、审计、双语界面）在三个平台**完全一致**；
+与操作系统打交道的部分按平台走原生通道：
+
+| 能力 | Windows | macOS | Linux |
+|---|---|---|---|
+| 系统代理（PAC） | 注册表 + WinINET | `networksetup`（逐网络服务） | GNOME `gsettings` |
+| 根证书信任 | `certutil -user`（当前用户库） | `security add-trusted-cert`（登录钥匙串） | NSS 用户库 / 系统信任库 |
+| 根证书撤销 | `certutil -delstore` | `security delete-certificate` | 删除证书 + 重算信任库 |
+| hosts 提权 | UAC（PowerShell RunAs） | osascript 授权框 | `pkexec`（退回 `sudo -n`） |
+| CA 私钥落盘 | DPAPI 加密 | 钥匙串（文件只留指针） | **明文 + 0600**（无系统密钥库） |
+| 数据目录权限检查 | `icacls` ACL | 权限位 | 权限位 |
+| 调试器附加检测 | Win32 API | `sysctl`（P_TRACED） | `/proc` TracerPid |
+| 进程归因 | 连接表 + 进程句柄 | `lsof` | `/proc/net/tcp` |
+| DNS 缓存刷新 | `ipconfig /flushdns` | `dscacheutil` + mDNSResponder | `resolvectl` |
+
+> [!IMPORTANT]
+> Linux 桌面若无 `gsettings`（非 GNOME）或没有 polkit（`pkexec`），对应的系统能力会明确提示
+> 需要手动完成——守护不会在「你以为已接管、实际明文直连」的状态下静默运行。
+> 443 透明层（hosts 模式）在所有平台都需要管理员 / root 权限才能监听。
 
 ### 从源码运行
 
@@ -185,7 +219,19 @@ npm run tauri dev
 
 ```bash
 npm run tauri build
-# 产物位于 src-tauri/target/release/bundle/
+# 产物位于 src-tauri/target/release/bundle/（Windows: nsis + msi）
+```
+
+按平台补充：
+
+```bash
+# macOS（universal：Apple Silicon + Intel 一体）
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run tauri build -- --target universal-apple-darwin --bundles dmg
+
+# Linux（deb + AppImage；需要 WebKitGTK 4.1 开发库）
+sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+npm run tauri build -- --bundles deb,appimage
 ```
 
 ### 跑测试与自检
@@ -240,14 +286,14 @@ AiGuard/
 │       ├── state.rs         # AppState、CA 生成、AI 域名表、黑/白名单、向导 / 快捷键 / 更新配置
 │       ├── proxy.rs         # hudsucker MITM 引擎（脱敏 / 拦截 / 还原）
 │       ├── transparent.rs   # hosts 模式透明拦截层（SNI 识别 → 动态签发 → 桥接本地代理）
-│       ├── hosts.rs         # hosts 文件标记块写入 / 移除（需管理员权限）
+│       ├── hosts.rs         # hosts 文件标记块写入 / 移除（三平台各自的提权通道）
 │       ├── dns.rs           # 绕过系统解析器的 DNS 直查（hosts 模式配套）
-│       ├── process.rs       # 客户端进程识别（TCP 连接表 → PID → exe 路径）
-│       ├── proxy_config.rs  # Windows 注册表系统代理 + PAC 生成
-│       ├── security.rs      # 本机安全加固：调试器检测、CA 私钥 DPAPI 保护、端口占用诊断
+│       ├── process.rs       # 客户端进程识别（连接表 → PID → 可执行文件路径）
+│       ├── proxy_config.rs  # 三平台系统代理（注册表 / networksetup / gsettings）+ PAC 生成
+│       ├── security.rs      # 本机安全加固：调试器检测、CA 私钥系统级保护、端口占用诊断
 │       ├── store.rs         # SQLite 持久化：请求日志 / 审计事件 / kv 配置（不存原文）
 │       ├── link_check.rs    # 主动核查执行器（追踪标记注入 + 回显验证）
-│       ├── console.rs       # 外部命令输出解码（系统代码页 → UTF-8）
+│       ├── console.rs       # 外部命令输出解码（Windows 系统代码页 → UTF-8；unix 直读）
 │       ├── i18n.rs          # 窗口外界面（托盘 / 通知）的中英文表，按 Language 取词
 │       └── commands.rs      # Tauri 命令 + 事件
 ├── src/                     # React + TypeScript 前端（Vite）
@@ -278,6 +324,8 @@ AiGuard/
 - 启用了证书固定（pinning）的应用无法被拦截，会自动放行（不破坏其工作）。
 - QUIC / HTTP3（UDP）流量不走系统代理，需在浏览器侧禁用 QUIC（如 `chrome://flags`）才能完整覆盖。
 - 同一原文的占位符在不同会话间不同：跨会话的对话各自独立还原，请勿手动复制占位符到其他会话。
+- **Linux** 无系统级密钥库可用时，CA 私钥以明文落盘并收紧到 0600（加固面板会如实显示为「明文」）；
+  非 GNOME 桌面 / 无 polkit 环境下，系统代理与 hosts 提权需要按提示手动完成。
 
 ---
 
