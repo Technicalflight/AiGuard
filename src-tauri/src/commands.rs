@@ -1656,6 +1656,7 @@ pub fn get_language(state: State<'_, Arc<AppState>>) -> Result<String, String> {
 ///
 /// 除了落盘，还必须**立刻重建托盘菜单**——托盘与通知是"窗口外"的界面，
 /// 不同步换语言就会出现"窗口已经是英文、右键菜单还是中文"的割裂。
+/// 窗口标题同理（任务栏悬停 / Alt+Tab 里可见），一并同步。
 #[tauri::command]
 pub fn set_language(
     app: tauri::AppHandle,
@@ -1665,6 +1666,7 @@ pub fn set_language(
     let lang = crate::i18n::Language::parse(&language);
     let saved = state.apply_language(lang)?;
     crate::refresh_tray(&app);
+    crate::sync_window_title(&app);
     Ok(saved.as_str().to_string())
 }
 
