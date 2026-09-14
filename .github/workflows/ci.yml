@@ -135,6 +135,13 @@ jobs:
   cross:
     name: 跨平台编译与测试（${{ matrix.label }}）
     runs-on: ${{ matrix.platform }}
+    env:
+      # 调试构建只带行表、不带完整 DWARF：测试二进制的链接输入缩小一个量级。
+      # 背景：macOS runner（arm64 + 新版 ld）上出现过「编译检查全绿、cargo test
+      # 在链接测试二进制阶段失败且日志里没有任何 FAILED/panicked 行」的失败——
+      # 链接层问题不会留下测试层证据。压小链接输入既降低链接器压力也加快构建；
+      # panic 的文件与行号仍来自行表，注解诊断不受影响。
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     strategy:
       fail-fast: false
       matrix:
@@ -167,8 +174,15 @@ jobs:
       - name: 编译检查（含测试目标，失败自描述）
         shell: bash
         run: |
+          # ⚠ shell: bash 是 `bash --noprofile --norc -eo pipefail` 启动的：
+          # 「cargo check | tee」管道一失败，errexit 会在 PIPESTATUS 取值之前
+          # 杀掉整个脚本，下面所有诊断代码都执行不到（e4e3803 / 34890620636
+          # 两轮失败注解里只剩 exit code，就是这个原因）。诊断步骤必须显式
+          # 关掉 errexit 取码、再恢复。
+          set +e
           cargo check --workspace --all-targets 2>&1 | tee /tmp/check.log
           code=${PIPESTATUS[0]}
+          set -e
           echo "cargo check 退出码: $code"
           if [ "$code" -ne 0 ]; then
             # 注解任何人都能读；Actions 日志要仓库写权限（外部贡献者拿不到）
@@ -185,8 +199,12 @@ jobs:
       - name: 运行测试（失败自描述）
         shell: bash
         run: |
+          # ⚠ 与编译检查步骤同理：`-eo pipefail` 下「cargo test | tee」失败会在
+          # 取 PIPESTATUS 之前直接退出，测试层/编译层的失败自描述全部失效。
+          set +e
           cargo test --workspace --no-fail-fast 2>&1 | tee /tmp/test.log
           code=${PIPESTATUS[0]}
+          set -e
           echo "cargo test 退出码: $code"
           if [ "$code" -ne 0 ]; then
             # 注解必须自带结论：只报「哪个用例挂了」不够，panic 的正文在下一行
@@ -200,5 +218,14 @@ jobs:
                 }
               }
             ' /tmp/test.log | head -40
+            # cargo test 对「测试二进制的编译/链接失败」同样返回 101，但日志里
+            # 没有 FAILED / panicked 行（e4e3803 那次 macOS 就是：注解里只剩
+            # exit code 101，失败原因完全不可见）。这类失败单独带出 ^error 行
+            # 与日志末尾——失败必须能被诊断，而不是每次都靠人肉翻日志。
+            if ! grep -qE "^test .+ \.\.\. FAILED|panicked at" /tmp/test.log; then
+              echo "::error::（测试层无 FAILED/panicked 行——应为编译或链接层失败，附 ^error 行与日志末尾）"
+              grep -E "^error" /tmp/test.log | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+              tail -20 /tmp/test.log | while IFS= read -r l; do echo "::error::| $l"; done
+            fi
             exit "$code"
           fi
