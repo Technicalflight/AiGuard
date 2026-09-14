@@ -174,8 +174,15 @@ jobs:
       - name: 编译检查（含测试目标，失败自描述）
         shell: bash
         run: |
+          # ⚠ shell: bash 是 `bash --noprofile --norc -eo pipefail` 启动的：
+          # 「cargo check | tee」管道一失败，errexit 会在 PIPESTATUS 取值之前
+          # 杀掉整个脚本，下面所有诊断代码都执行不到（e4e3803 / 34890620636
+          # 两轮失败注解里只剩 exit code，就是这个原因）。诊断步骤必须显式
+          # 关掉 errexit 取码、再恢复。
+          set +e
           cargo check --workspace --all-targets 2>&1 | tee /tmp/check.log
           code=${PIPESTATUS[0]}
+          set -e
           echo "cargo check 退出码: $code"
           if [ "$code" -ne 0 ]; then
             # 注解任何人都能读；Actions 日志要仓库写权限（外部贡献者拿不到）
@@ -192,8 +199,12 @@ jobs:
       - name: 运行测试（失败自描述）
         shell: bash
         run: |
+          # ⚠ 与编译检查步骤同理：`-eo pipefail` 下「cargo test | tee」失败会在
+          # 取 PIPESTATUS 之前直接退出，测试层/编译层的失败自描述全部失效。
+          set +e
           cargo test --workspace --no-fail-fast 2>&1 | tee /tmp/test.log
           code=${PIPESTATUS[0]}
+          set -e
           echo "cargo test 退出码: $code"
           if [ "$code" -ne 0 ]; then
             # 注解必须自带结论：只报「哪个用例挂了」不够，panic 的正文在下一行
