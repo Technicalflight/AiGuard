@@ -75,9 +75,14 @@ export async function listRequestsPage(
   action?: string
 ): Promise<LogPage<RequestLog>> {
   if (!isTauri()) {
-    // 浏览器预览：从 MOCK 日志切片
-    const filtered = action
-      ? MOCK_LOGS.filter((l) => (action === "block" ? l.blocked === 1 || l.action === "block" : l.action === action))
+    // 浏览器预览：从 MOCK 日志切片。
+    // ⚠ 这里必须和下面真实后端分支用**同一套归一化**：`"all"` 表示不筛选。
+    // 踩过的坑：RequestsPage 的默认筛选值就是 "all"，而这里原先只判 `action` 的
+    // 真值，于是 "all" 走进了筛选分支、`l.action === "all"` 永不成立，
+    // 结果是浏览器预览下「全部」页永远空表（`共 0 条`），详情弹窗也就永远打不开。
+    const want = action && action !== "all" ? action : null;
+    const filtered = want
+      ? MOCK_LOGS.filter((l) => (want === "block" ? l.blocked === 1 || l.action === "block" : l.action === want))
       : MOCK_LOGS;
     const start = (page - 1) * pageSize;
     return {
