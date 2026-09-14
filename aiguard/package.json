@@ -11,6 +11,8 @@
     "i18n:extract": "node scripts/i18n_extract.mjs",
     "i18n:rs": "node scripts/i18n_rs_extract.mjs",
     "i18n:check": "node scripts/i18n_check.mjs",
+    "i18n:e2e": "node scripts/i18n_e2e.mjs",
+    "i18n:locale": "node scripts/i18n_locale_check.mjs",
     "i18n:merge": "node scripts/i18n_merge.mjs"
   },
   "dependencies": {
