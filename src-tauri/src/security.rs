@@ -19,7 +19,9 @@ pub const KEY_MAGIC: &[u8] = b"AIGUARD-DPAPI-1\n";
 /// 误杀自身调试需求比漏报更糟）。
 #[cfg(target_os = "windows")]
 pub fn debugger_attached() -> bool {
-    use windows_sys::Win32::Foundation::BOOL;
+    // windows-sys 0.61 起 BOOL 归到 `windows_sys::core`，
+    // `Win32::Foundation` 不再转发它。
+    use windows_sys::core::BOOL;
     use windows_sys::Win32::System::Diagnostics::Debug::{
         CheckRemoteDebuggerPresent, IsDebuggerPresent,
     };

@@ -40,6 +40,12 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "hyper-rustls"
       - dependency-name: "tokio-rustls"
+      # hudsucker 是上面那三项的「因」：0.21 仍在 hyper 0.14 / http 0.2 / tokio-rustls 0.24 上，
+      # 0.22 起整体换到 hyper 1.x / http 1.x / tokio-rustls 0.26。
+      # 也就是说 0.20 -> 0.22 不是版本号改动，是换生态，代理引擎的请求/响应类型要整体改写。
+      # 所以只放行 0.21.x，0.22 以上一律不接受自动 PR。
+      - dependency-name: "hudsucker"
+        versions: [">= 0.22.0"]
 
   # Actions 本身
   - package-ecosystem: "github-actions"

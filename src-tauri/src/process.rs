@@ -240,7 +240,9 @@ pub fn exe_path_of_pid(pid: u32) -> Option<String> {
     };
 
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    if handle == 0 {
+    // windows-sys 0.61 起 HANDLE 是 `*mut c_void`（0.52 时是 `isize`），
+    // 所以失败判据从 `== 0` 改成空指针判断。
+    if handle.is_null() {
         return None;
     }
     let mut buf16 = [0u16; 2048];
@@ -256,4 +258,32 @@ pub fn exe_path_of_pid(pid: u32) -> Option<String> {
 #[cfg(not(target_os = "windows"))]
 pub fn exe_path_of_pid(_pid: u32) -> Option<String> {
     None
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::*;
+
+    /// 回归：windows-sys 0.52 → 0.61 时 `HANDLE` 由 `isize` 变成 `*mut c_void`，
+    /// 失败判据随之从 `handle == 0` 改成 `handle.is_null()`。
+    ///
+    /// 这个判断一旦写反，`exe_path_of_pid` 会**永远返回 None**：不 panic、不报错，
+    /// 只是进程黑/白名单静默失效（`resolve_client_exe` → 拿不到 exe 就匹配不上规则）。
+    /// 这类「安静地不工作」正是最需要断言盯住的，所以这里直接拿当前进程当样本。
+    #[test]
+    fn test_exe_path_of_pid_resolves_self() {
+        let exe = exe_path_of_pid(std::process::id())
+            .expect("当前进程应能解析出自己的 exe 路径（通道异常）");
+        assert!(
+            exe.to_ascii_lowercase().ends_with(".exe"),
+            "解析结果不像 exe 路径: {exe}"
+        );
+    }
+
+    /// 无效 PID 必须干净地返回 None（而不是空串或 panic）。
+    /// PID 0 是 OpenProcess 必然拒绝的取值，用来验证「打开失败」这一分支。
+    #[test]
+    fn test_exe_path_of_pid_rejects_invalid_pid() {
+        assert!(exe_path_of_pid(0).is_none(), "PID 0 不应解析出路径");
+    }
 }
