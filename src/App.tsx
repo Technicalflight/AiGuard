@@ -1390,7 +1390,7 @@ function RequestsPage() {
                 <th style={{ width: "11%" }}>{t("命中类型")}</th>
                 <th style={{ width: 76 }}>{t("动作")}</th>
                 <th style={{ width: 110 }}>{t("哈希")}</th>
-                <th style={{ width: 60 }}>{t("详情")}</th>
+                <th style={{ width: 84 }}>{t("详情")}</th>
               </tr>
             </thead>
             <tbody>
@@ -3614,7 +3614,7 @@ function AuditPage() {
                 <th style={{ width: "11%" }}>{t("命中类型")}</th>
                 <th style={{ width: 76 }}>{t("动作")}</th>
                 <th style={{ width: 110 }}>{t("请求哈希")}</th>
-                <th style={{ width: 60 }}>{t("详情")}</th>
+                <th style={{ width: 84 }}>{t("详情")}</th>
               </tr>
             </thead>
             <tbody>
