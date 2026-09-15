@@ -1297,3 +1297,13 @@ export async function setLockerConfig(config: LockerConfig): Promise<LockerConfi
   if (!isTauri()) return { ...config };
   return tauriInvoke<LockerConfig>("set_locker_config", { config });
 }
+
+export async function getCustomHosts(): Promise<string[]> {
+  if (!isTauri()) return [];
+  return tauriInvoke<string[]>("get_custom_hosts");
+}
+
+export async function setCustomHosts(hosts: string[]): Promise<string[]> {
+  if (!isTauri()) return hosts;
+  return tauriInvoke<string[]>("set_custom_hosts", { hosts });
+}

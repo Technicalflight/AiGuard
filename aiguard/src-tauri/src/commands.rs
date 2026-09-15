@@ -1235,7 +1235,7 @@ fn enable_guard_inner(state: &Arc<AppState>) -> Result<(), String> {
         return Err(e);
     }
     if mode == "hosts_file" {
-        let block = crate::hosts::build_block(crate::state::AI_HOSTS);
+        let block = state.hosts_block();
         let msg = crate::hosts::apply_hosts_block(true, &block)?;
         log::info!("hosts 模式启用: {}", msg);
         state.store.kv_set("guard.enabled", "1")?;
@@ -1260,7 +1260,7 @@ fn disable_guard_inner(state: &Arc<AppState>) -> Result<(), String> {
         config.mode.as_str().to_string()
     };
     if mode == "hosts_file" {
-        let block = crate::hosts::build_block(crate::state::AI_HOSTS);
+        let block = state.hosts_block();
         if crate::hosts::hosts_block_exists() {
             crate::hosts::apply_hosts_block(false, &block)?;
         }
@@ -1272,7 +1272,7 @@ fn disable_guard_inner(state: &Arc<AppState>) -> Result<(), String> {
     proxy_config::disable_system_proxy()?;
     // 防御：非 hosts 模式下若仍有残留块（如模式状态错乱遗留），一并清理
     if crate::hosts::hosts_block_exists() {
-        let block = crate::hosts::build_block(crate::state::AI_HOSTS);
+        let block = state.hosts_block();
         crate::hosts::apply_hosts_block(false, &block)?;
         crate::hosts::flush_dns_cache();
     }
@@ -1311,7 +1311,7 @@ pub fn set_proxy_mode(
     }
 
     // ── 幂等清理反向模式的系统级残留（不依赖 old_mode 的正确性）──
-    let hosts_block = crate::hosts::build_block(crate::state::AI_HOSTS);
+    let hosts_block = state.hosts_block();
     match mode.as_str() {
         // 切到系统代理：无论守护开关，都把可能残留的 hosts 块删掉（存在才提权）
         "system_proxy" => {
@@ -1347,6 +1347,108 @@ pub fn set_proxy_mode(
             Ok(format!("已切换到 hosts 模式。{}", msg))
         }
         _ => Ok("模式已保存".to_string()),
+    }
+}
+
+// ─────────────────────────── 自定义接管域名（中转 API 等） ───────────────────────────
+
+/// 清洗自定义接管域名清单：剥 scheme / 路径 / 端口、小写、去空、形态校验、去重。
+fn sanitize_custom_hosts(hosts: Vec<String>) -> Result<Vec<String>, String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::with_capacity(hosts.len());
+    for h in hosts {
+        let h = crate::state::normalize_host(&h);
+        if h.is_empty() {
+            continue;
+        }
+        if h.chars().count() > 253 {
+            return Err(format!("域名过长: {}", h));
+        }
+        // 域名字符集白名单：字母数字 / 点 / 连字符 / 下划线（宽容）
+        if !h
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+        {
+            return Err(format!("域名含非法字符: {}（只填域名本身，不要带路径）", h));
+        }
+        if !h.contains('.') {
+            return Err(format!("域名至少要含一个点: {}（如 api.example.com）", h));
+        }
+        if seen.insert(h.clone()) {
+            out.push(h);
+        }
+        if out.len() >= 64 {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// 读取自定义接管域名清单。
+#[tauri::command]
+pub fn get_custom_hosts(state: State<'_, Arc<AppState>>) -> Result<Vec<String>, String> {
+    Ok(state.custom_hosts_snapshot())
+}
+
+/// 保存自定义接管域名清单：清洗 → 落盘 → 热更新 → 按拦截模式同步系统级改动。
+///
+/// 系统代理模式：重新写一次 PAC 地址触发 WinINET 刷新，浏览器强制重取
+/// （PAC 内容由 PAC 服务实时生成，已含新域名）；hosts 模式：重建 hosts 块 + 刷 DNS。
+#[tauri::command]
+pub fn set_custom_hosts(
+    state: State<'_, Arc<AppState>>,
+    hosts: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let cleaned = sanitize_custom_hosts(hosts)?;
+    let json = serde_json::to_string(&cleaned).map_err(|e| safe_err(&e))?;
+    state.store.kv_set(crate::state::KV_CUSTOM_HOSTS, &json)?;
+    match state.custom_hosts.write() {
+        Ok(mut g) => *g = cleaned.clone(),
+        Err(poisoned) => *poisoned.into_inner() = cleaned.clone(),
+    }
+    let (enabled, mode) = {
+        let cfg = match state.config.read() {
+            Ok(c) => c,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        (cfg.enabled, cfg.mode.as_str().to_string())
+    };
+    if enabled {
+        if mode == "hosts_file" {
+            let block = state.hosts_block();
+            crate::hosts::apply_hosts_block(true, &block)?;
+            crate::hosts::flush_dns_cache();
+        } else {
+            // 重写注册表触发 WinINET 刷新，浏览器强制重取 PAC（内容已含新域名）
+            proxy_config::set_system_proxy_pac(&proxy_config::pac_http_url())?;
+        }
+    }
+    Ok(cleaned)
+}
+
+#[cfg(test)]
+mod custom_hosts_tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_custom_hosts_normalizes() {
+        let out = sanitize_custom_hosts(vec![
+            "https://AI.HYBGZS.com/v1/chat".to_string(),
+            "  api.example.com:8443  ".to_string(),
+            "ai.hybgzs.com".to_string(), // 与第一条归一后重复 → 去重
+        ])
+        .unwrap();
+        assert_eq!(out, vec!["ai.hybgzs.com".to_string(), "api.example.com".to_string()]);
+    }
+
+    #[test]
+    fn test_sanitize_custom_hosts_rejects_bad_shape() {
+        // 无点（不是域名）
+        assert!(sanitize_custom_hosts(vec!["localhost".to_string()]).is_err());
+        // 带路径残留（剥完 scheme 后 `/` 已被 normalize 剥掉，但空格等非法字符要拒）
+        assert!(sanitize_custom_hosts(vec!["my api.example.com".to_string()]).is_err());
+        // 空输入 → 空清单合法（清空操作）
+        assert_eq!(sanitize_custom_hosts(vec![]).unwrap(), Vec::<String>::new());
     }
 }
 

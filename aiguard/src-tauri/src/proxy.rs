@@ -113,14 +113,14 @@ impl AiGuardHandler {
             .unwrap_or_default();
 
         // 非 AI 域名：直通，不做任何处理
-        if !state::is_ai_host(&host) {
+        if !self.state.is_ai_host(&host) {
             return RequestOrResponse::Request(req);
         }
 
         // 后缀命中的动态子域（上传/CDN 等，如 hf-xxxx.deepseek.com）：
         // 纳入守护路由，但**完全透传**——multipart/base64 内容不适用脱敏替换，
         // 做内容扫描反而会破坏文件与上传流程。
-        if !state::is_ai_host_exact(&host) {
+        if !self.state.is_ai_host_exact(&host) {
             let path = req.uri().path().to_string();
             self.log_passthrough(&host, &path, client_addr);
             return RequestOrResponse::Request(req);
@@ -1303,7 +1303,7 @@ pub async fn run_pac_server(state: Arc<AppState>) -> anyhow::Result<()> {
                 };
                 (c.enabled, c.proxy_port)
             };
-            let body = crate::proxy_config::dynamic_pac_content(enabled, port);
+            let body = crate::proxy_config::dynamic_pac_content(enabled, port, &st.custom_hosts_snapshot());
             // PAC 正文含中文注释，用 UTF-8 字节发送就必须声明 charset——
             // 否则 WinHTTP / 浏览器可能按系统代码页解码，注释变乱码。
             let resp = format!(

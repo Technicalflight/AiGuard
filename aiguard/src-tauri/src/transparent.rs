@@ -17,7 +17,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsAcceptor;
 
-use crate::state::{self, AppState};
+use crate::state::AppState;
 
 const LISTEN_PORT: u16 = 443;
 const HELLO_MAX: usize = 64 * 1024;
@@ -159,7 +159,7 @@ async fn handle_conn(
     };
 
     // 2. 仅处理受守护的 AI 域名（hosts 清单外理论上无流量，防御性丢弃）
-    if !state::is_ai_host(&sni) {
+    if !state.is_ai_host(&sni) {
         return Err(format!("SNI 非 AI 域名: {}", sni));
     }
 
