@@ -93,6 +93,7 @@ import {
   setLockerConfig,
   getCustomHosts,
   setCustomHosts,
+  configureNodeCaEnv,
   type RegexHit,
   type ImportPreview,
   type SemanticConfig,
@@ -3869,6 +3870,23 @@ function SettingsPage({
     }
   };
 
+  // ─────────── Node 客户端 CA 信任（NODE_EXTRA_CA_CERTS） ───────────
+
+  const [nodeCaBusy, setNodeCaBusy] = useState(false);
+  const [nodeCaMsg, setNodeCaMsg] = useState("");
+
+  const doConfigureNodeCa = async () => {
+    setNodeCaBusy(true);
+    setNodeCaMsg("");
+    try {
+      setNodeCaMsg(tb(await configureNodeCaEnv()));
+    } catch (e) {
+      setNodeCaMsg(`${t("失败：")}${errMsg(e)}`);
+    } finally {
+      setNodeCaBusy(false);
+    }
+  };
+
   // ─────────── 本机安全加固 ───────────
 
   const refreshHardening = useCallback(async () => {
@@ -4031,6 +4049,11 @@ function SettingsPage({
                 {installMsg}
               </div>
             )}
+            {nodeCaMsg && (
+              <div className="muted" style={{ marginTop: 6, wordBreak: "break-all" }}>
+                {nodeCaMsg}
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <button className="btn primary" onClick={() => void doInstall()}>
@@ -4038,6 +4061,13 @@ function SettingsPage({
             </button>
             <button className="btn mini" disabled={checking} onClick={() => void runTrustCheck()}>
               {checking ? t("检测中…") : t("重新检测")}
+            </button>
+            <button
+              className="btn mini"
+              disabled={nodeCaBusy}
+              onClick={() => void doConfigureNodeCa()}
+            >
+              {nodeCaBusy ? t("配置中…") : t("配置 Node 客户端信任")}
             </button>
           </div>
         </div>
@@ -4052,6 +4082,9 @@ function SettingsPage({
           }}
         >
           {t("风险提示：该根证书仅用于拦截本机发往 AI 服务的流量并做脱敏处理，绝不用于监控他人。请勿将证书私钥提供给任何第三方。")}
+        </div>
+        <div className="muted" style={{ marginTop: 10, fontSize: 12, lineHeight: 1.7 }}>
+          {t("桌面 / CLI 的 AI 客户端（ZCode、Claude Code 等）不读系统证书存储——若它们的请求出现 TLS 校验失败，点「配置 Node 客户端信任」写入 NODE_EXTRA_CA_CERTS 后重启该客户端；非 Node 客户端请在其设置里寻找证书 / TLS 相关选项。")}
         </div>
       </div>
 

@@ -1761,6 +1761,72 @@ pub fn get_ca_status(app: tauri::AppHandle) -> Result<CaStatus, String> {
     })
 }
 
+/// 为 Node.js 系客户端配置 CA 信任：把 CA 证书路径写入用户环境变量
+/// `NODE_EXTRA_CA_CERTS`（HKCU\Environment）并广播环境变更。
+///
+/// 背景：桌面 / CLI 的 Node 客户端（ZCode 等 agent 工具）**不读 Windows 系统证书
+/// 存储**——「安装根证书」对它们无效，TLS 拦截被客户端拒（握手 eof）。
+/// `NODE_EXTRA_CA_CERTS` 是 Node 官方的追加信任机制，只增不减，全局设置安全。
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn configure_node_ca_env(app: tauri::AppHandle) -> Result<String, String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    let cert_path = ca_cert_path(&app)?;
+    if !cert_path.exists() {
+        return Err("CA 证书文件尚未生成，请先开启一次守护或重启应用".to_string());
+    }
+    let path_str = cert_path.display().to_string();
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let env = hkcu
+        .open_subkey_with_flags("Environment", KEY_SET_VALUE | KEY_QUERY_VALUE)
+        .map_err(|e| format!("打开用户环境变量注册表失败: {}", safe_err(&e)))?;
+    let existing: String = env.get_value("NODE_EXTRA_CA_CERTS").unwrap_or_default();
+    let new_value = if existing.is_empty() {
+        path_str.clone()
+    } else if existing.split(';').any(|p| p.trim() == path_str) {
+        return Ok(format!(
+            "环境变量已包含本应用 CA，无需重复配置。NODE_EXTRA_CA_CERTS={}",
+            existing
+        ));
+    } else {
+        // 保留用户已有的追加信任路径，用路径分隔符追加（Node 官方语义）
+        format!("{};{}", existing, path_str)
+    };
+    env.set_value("NODE_EXTRA_CA_CERTS", &new_value)
+        .map_err(|e| format!("写入环境变量失败: {}", safe_err(&e)))?;
+    broadcast_env_change();
+    Ok(format!(
+        "已写入用户环境变量 NODE_EXTRA_CA_CERTS={}。请**完全退出并重新启动**相关客户端（环境变量只对新启动的进程生效）。",
+        new_value
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn broadcast_env_change() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+    };
+    unsafe {
+        let mut result: usize = 0;
+        SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            0usize,
+            "Environment\0".as_ptr() as isize,
+            SMTO_ABORTIFHUNG,
+            1000,
+            &mut result,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn configure_node_ca_env(_app: tauri::AppHandle) -> Result<String, String> {
+    Err("当前平台请手动设置环境变量 NODE_EXTRA_CA_CERTS 指向 CA 证书文件".to_string())
+}
+
 /// 证书在系统信任库中的安装检测结果。
 #[derive(Debug, Clone, Serialize)]
 pub struct CaTrustStatus {

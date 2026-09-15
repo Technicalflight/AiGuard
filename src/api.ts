@@ -1307,3 +1307,9 @@ export async function setCustomHosts(hosts: string[]): Promise<string[]> {
   if (!isTauri()) return hosts;
   return tauriInvoke<string[]>("set_custom_hosts", { hosts });
 }
+
+/** 把本应用 CA 写进用户环境变量 NODE_EXTRA_CA_CERTS（追加，不覆盖），供 Node 系客户端信任。 */
+export async function configureNodeCaEnv(): Promise<string> {
+  if (!isTauri()) return "（浏览器预览：模拟配置成功）";
+  return tauriInvoke<string>("configure_node_ca_env");
+}

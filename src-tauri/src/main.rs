@@ -788,6 +788,7 @@ fn main() {
             commands::set_locker_config,
             commands::get_custom_hosts,
             commands::set_custom_hosts,
+            commands::configure_node_ca_env,
         ])
         .run(tauri::generate_context!())
         .expect("AI 安全卫士启动失败");
