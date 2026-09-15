@@ -2309,7 +2309,10 @@ function LockerCard() {
     }
   };
 
-  const add = () => {
+  // 所有操作即时落盘（与语义检测卡一致）——「添加只进内存、另点保存才生效」
+  // 曾被用户当成丢失：切页重载后端返回空，条目凭空消失。
+  const add = async () => {
+    if (busy) return;
     const name = newName.trim();
     const value = newValue.trim();
     if (isPathKind) {
@@ -2317,11 +2320,10 @@ function LockerCard() {
         setErr(t("请填入文件或文件夹路径"));
         return;
       }
-      setErr("");
       // 路径条目键名可空（后端自动取路径尾段）
-      setDraft([...draft, { name, value, action: "mask", enabled: true, kind: "path" }]);
       setNewName("");
       setNewValue("");
+      await save([...draft, { name, value, action: "mask", enabled: true, kind: "path" }]);
       return;
     }
     if (!name || !value) {
@@ -2332,10 +2334,9 @@ function LockerCard() {
       setErr(t("值至少 8 个字符，过短的值会误伤正常文本"));
       return;
     }
-    setErr("");
-    setDraft([...draft, { name, value, action: "mask", enabled: true, kind: "value" }]);
     setNewName("");
     setNewValue("");
+    await save([...draft, { name, value, action: "mask", enabled: true, kind: "value" }]);
   };
 
   if (!cfg) {
@@ -2356,9 +2357,10 @@ function LockerCard() {
               <Toggle
                 on={e.enabled}
                 onChange={() => {
+                  if (busy) return;
                   const n = [...draft];
                   n[i] = { ...e, enabled: !e.enabled };
-                  setDraft(n);
+                  void save(n);
                 }}
               />
               <span
@@ -2380,7 +2382,7 @@ function LockerCard() {
                     onClick={() => {
                       const n = [...draft];
                       n[i] = { ...e, action: "mask" };
-                      setDraft(n);
+                      void save(n);
                     }}
                   >
                     {t("脱敏")}
@@ -2392,7 +2394,7 @@ function LockerCard() {
                     onClick={() => {
                       const n = [...draft];
                       n[i] = { ...e, action: "block" };
-                      setDraft(n);
+                      void save(n);
                     }}
                   >
                     {t("拦截")}
@@ -2403,7 +2405,10 @@ function LockerCard() {
                 className="btn"
                 disabled={busy}
                 style={{ padding: "2px 10px", fontSize: 12, marginLeft: e.kind === "path" ? "auto" : 0 }}
-                onClick={() => setDraft(draft.filter((_, j) => j !== i))}
+                onClick={() => {
+                  if (busy) return;
+                  void save(draft.filter((_, j) => j !== i));
+                }}
               >
                 {t("删除")}
               </button>
@@ -2460,11 +2465,8 @@ function LockerCard() {
             {t("浏览…")}
           </button>
         )}
-        <button className="btn" disabled={busy} onClick={add}>
+        <button className="btn" disabled={busy} onClick={() => void add()}>
           {t("添加")}
-        </button>
-        <button className="btn primary" disabled={busy} onClick={() => void save(draft)}>
-          {t("保存保险柜")}
         </button>
         <span className="muted" style={{ fontSize: 12 }}>
           {draft.length} {t("条")}
