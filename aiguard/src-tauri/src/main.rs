@@ -782,6 +782,8 @@ fn main() {
             commands::import_rules_apply,
             commands::apply_rule_preset,
             commands::get_rule_preset,
+            commands::get_semantic_config,
+            commands::set_semantic_config,
         ])
         .run(tauri::generate_context!())
         .expect("AI 安全卫士启动失败");
