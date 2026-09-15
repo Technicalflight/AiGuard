@@ -226,6 +226,116 @@ pub fn builtin_spec_by_id(id: &str) -> Option<RuleSpec> {
     default_rule_specs().into_iter().find(|s| s.id == id)
 }
 
+// ═══════════════════════ 内置规则预设（保守 / 均衡 / 激进） ═══════════════════════
+
+/// 预设档位字面量（前端 / 命令层共用同一组字符串）。
+pub const PRESET_CONSERVATIVE: &str = "conservative";
+pub const PRESET_BALANCED: &str = "balanced";
+pub const PRESET_AGGRESSIVE: &str = "aggressive";
+pub const PRESET_CUSTOM: &str = "custom";
+
+/// 三档预设对内置规则的 (enabled, action) 映射，是「误伤打扰」与「防护强度」的权衡：
+///
+/// - **保守**：只守身份证 / 银行卡 / API Key 三类最高危（全部脱敏），其余关闭 ——
+///   打扰最小，代价是手机号 / 邮箱等不再脱敏；
+/// - **均衡**：内置默认 —— 五类启用（脱敏），IP 关闭（版本号 / 序号误伤大于漏报收益）；
+/// - **激进**：全部六类启用，且身份证 / 银行卡 / API Key 升级为**拦截**
+///   （宁可拦下含高危信息的整条请求），手机号 / 邮箱 / IP 维持脱敏。
+///
+/// 预设只改内置规则的开关与动作：正则、自定义规则、黑 / 白名单一律不动。
+fn preset_table(preset: &str) -> &'static [(&'static str, bool, &'static str)] {
+    match preset {
+        PRESET_CONSERVATIVE => &[
+            ("builtin.idcard", true, "mask"),
+            ("builtin.bankcard", true, "mask"),
+            ("builtin.apikey", true, "mask"),
+            ("builtin.phone", false, "mask"),
+            ("builtin.email", false, "mask"),
+            ("builtin.ip", false, "mask"),
+        ],
+        PRESET_AGGRESSIVE => &[
+            ("builtin.idcard", true, "block"),
+            ("builtin.bankcard", true, "block"),
+            ("builtin.apikey", true, "block"),
+            ("builtin.phone", true, "mask"),
+            ("builtin.email", true, "mask"),
+            ("builtin.ip", true, "mask"),
+        ],
+        // 均衡 = 内置默认
+        _ => &[
+            ("builtin.idcard", true, "mask"),
+            ("builtin.phone", true, "mask"),
+            ("builtin.bankcard", true, "mask"),
+            ("builtin.email", true, "mask"),
+            ("builtin.apikey", true, "mask"),
+            ("builtin.ip", false, "mask"),
+        ],
+    }
+}
+
+/// 把预设应用到规格列表（只改内置规则的 enabled / action，自定义规则原样保留）。
+pub fn apply_preset_to_builtin(mut specs: Vec<RuleSpec>, preset: &str) -> Vec<RuleSpec> {
+    for (id, enabled, action) in preset_table(preset) {
+        if let Some(spec) = specs.iter_mut().find(|s| s.builtin && s.id == *id) {
+            spec.enabled = *enabled;
+            spec.action = action.to_string();
+        }
+    }
+    specs
+}
+
+/// 判定规格列表当前所处的预设档位：与某一档的内置 (enabled, action) 全部一致即该档，
+/// 否则 custom（用户改过任一内置规则的开关或动作）。档位判定不看正则改动。
+pub fn preset_of_specs(specs: &[RuleSpec]) -> &'static str {
+    for preset in [PRESET_CONSERVATIVE, PRESET_BALANCED, PRESET_AGGRESSIVE] {
+        let expect = apply_preset_to_builtin(default_rule_specs(), preset);
+        let matched = expect.iter().all(|e| {
+            specs
+                .iter()
+                .find(|s| s.id == e.id)
+                .map(|s| s.enabled == e.enabled && s.action == e.action)
+                .unwrap_or(false)
+        });
+        if matched {
+            return preset;
+        }
+    }
+    PRESET_CUSTOM
+}
+
+// ═══════════════════════ 正则测试（规则中心测试器） ═══════════════════════
+
+/// 单条命中（字符偏移，与 `Detector` 的统计口径一致）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RegexHit {
+    /// 命中起始（字符偏移，非字节）
+    pub start: usize,
+    /// 命中长度（字符数）
+    pub len: usize,
+    /// 命中文本
+    pub text: String,
+}
+
+/// 独立编译给定正则并返回全部命中 —— 供规则中心的正则测试器使用。
+/// 与线上引擎同一 regex crate：Unicode `\b` 语义、无 lookaround，测试结果即线上行为。
+/// 注意：不含内置标签的语义校验（身份证校验位 / Luhn 等）——那是随标签附加的，
+/// 测试器只验证正则本身。
+pub fn regex_test_hits(regex_src: &str, sample: &str) -> Result<Vec<RegexHit>, String> {
+    let re = Regex::new(regex_src).map_err(|e| format!("正则无效: {}", e))?;
+    let mut hits = Vec::new();
+    for mat in re.find_iter(sample) {
+        let start = sample[..mat.start()].chars().count();
+        let len = mat.as_str().chars().count();
+        hits.push(RegexHit {
+            start,
+            len,
+            text: mat.as_str().to_string(),
+        });
+    }
+    Ok(hits)
+}
+
+
 /// 检测引擎。
 /// `Clone` 成本很低（`regex::Regex` 内部是 Arc），便于共享给流式还原管道。
 #[derive(Clone)]
@@ -410,6 +520,66 @@ pub fn validate_ipv4(ip: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_preset_apply_and_detect() {
+        // 均衡 = 内置默认，且 preset_of_specs 能认出该档
+        let balanced = apply_preset_to_builtin(default_rule_specs(), PRESET_BALANCED);
+        assert_eq!(preset_of_specs(&balanced), PRESET_BALANCED);
+        // 保守：身份证仍在守（mask），手机号 / 邮箱 / IP 关闭
+        let conservative = apply_preset_to_builtin(balanced, PRESET_CONSERVATIVE);
+        let idcard = conservative.iter().find(|s| s.id == "builtin.idcard").unwrap();
+        assert!(idcard.enabled && idcard.action == "mask");
+        for off in ["builtin.phone", "builtin.email", "builtin.ip"] {
+            let s = conservative.iter().find(|x| x.id == off).unwrap();
+            assert!(!s.enabled, "{} 应在保守档关闭", off);
+        }
+        assert_eq!(preset_of_specs(&conservative), PRESET_CONSERVATIVE);
+        // 激进：高危三类升级为拦截，IP 重新开启
+        let aggressive = apply_preset_to_builtin(default_rule_specs(), PRESET_AGGRESSIVE);
+        let idcard_a = aggressive.iter().find(|s| s.id == "builtin.idcard").unwrap();
+        assert_eq!(idcard_a.action, "block");
+        let ip_a = aggressive.iter().find(|s| s.id == "builtin.ip").unwrap();
+        assert!(ip_a.enabled && ip_a.action == "mask");
+        assert_eq!(preset_of_specs(&aggressive), PRESET_AGGRESSIVE);
+        // 用户改过任何一条内置规则 → custom；自定义规则不影响档位判定
+        let mut tweaked = apply_preset_to_builtin(default_rule_specs(), PRESET_BALANCED);
+        tweaked[0].action = "warn".to_string();
+        assert_eq!(preset_of_specs(&tweaked), PRESET_CUSTOM);
+        let with_custom = {
+            let mut v = tweaked;
+            v.push(RuleSpec {
+                id: "custom.zz".into(),
+                tag: "CUSTOM".into(),
+                name: "自定义".into(),
+                regex: "foo".into(),
+                action: "block".into(),
+                enabled: true,
+                builtin: false,
+            });
+            v
+        };
+        assert_eq!(preset_of_specs(&with_custom), PRESET_CUSTOM);
+        // 预设不得动自定义规则
+        let mixed = apply_preset_to_builtin(with_custom, PRESET_AGGRESSIVE);
+        let cz = mixed.iter().find(|s| s.id == "custom.zz").unwrap();
+        assert_eq!(cz.action, "block", "自定义规则的动作为必须保持不变");
+    }
+
+    #[test]
+    fn test_regex_test_hits_char_offsets() {
+        // 字符偏移（非字节）：中文每个字计 1
+        let hits = regex_test_hits(r"\d+", "ab12中文34").unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].start, 2);
+        assert_eq!(hits[0].len, 2);
+        assert_eq!(hits[0].text, "12");
+        assert_eq!(hits[1].start, 6); // a b 1 2 中 文 = 6 个字符
+        assert_eq!(hits[1].text, "34");
+        // 无命中 → 空列表；非法正则 → Err
+        assert!(regex_test_hits(r"\d+", "abc").unwrap().is_empty());
+        assert!(regex_test_hits("([", "x").is_err());
+    }
 
     #[test]
     fn test_scrub_multi_tag_no_mutation() {

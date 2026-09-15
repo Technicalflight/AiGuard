@@ -364,6 +364,279 @@ pub fn remove_blacklist_entry(
     persist_blacklist(&state, list)
 }
 
+// ─────────────────────────── 规则工具箱（正则测试 / 导入导出 / 内置预设） ───────────────────────────
+
+/// 正则测试器的单条命中（字符偏移与 Detector 口径一致）。
+#[derive(Debug, Clone, Serialize)]
+pub struct TestHit {
+    pub start: usize,
+    pub len: usize,
+    pub text: String,
+}
+
+/// 用与线上引擎相同的 regex crate 测试单条正则（Unicode `\b`、无 lookaround），
+/// 测试结果即线上行为；不含内置标签的语义校验（那是随标签附加的逻辑）。
+#[tauri::command]
+pub fn test_regex(regex: String, sample: String) -> Result<Vec<TestHit>, String> {
+    let hits = aiguard_core::detector::regex_test_hits(&regex, &sample)?;
+    Ok(hits
+        .into_iter()
+        .map(|h| TestHit {
+            start: h.start,
+            len: h.len,
+            text: h.text,
+        })
+        .collect())
+}
+
+/// 规则包文件（导入 / 导出 / 分享的统一载体）。
+///
+/// 内容只有规则与名单配置（域名 / 路径 / 正则），不含任何流量数据或日志。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulesBundle {
+    pub format: String,
+    pub version: u32,
+    /// 导出时刻（Unix 秒；仅参考信息）
+    pub exported_at: u64,
+    pub rules: Vec<RuleSpec>,
+    pub whitelist: Vec<WhitelistEntry>,
+    pub blacklist: Vec<BlacklistEntry>,
+}
+
+/// 导出统计（返回给前端做结果提示）。
+#[derive(Debug, Clone, Serialize)]
+pub struct RulesFileStats {
+    pub path: String,
+    pub rules: usize,
+    pub whitelist: usize,
+    pub blacklist: usize,
+}
+
+fn bundle_format_ok(bundle: &RulesBundle) -> Result<(), String> {
+    if bundle.format != "aiguard.rules" {
+        return Err("不是 AI 安全卫士规则包（format 不匹配）".to_string());
+    }
+    if bundle.version != 1 {
+        return Err(format!("规则包版本不受支持: {}", bundle.version));
+    }
+    Ok(())
+}
+
+/// 导出全部规则与名单为 JSON 规则包（UTF-8 无 BOM）。路径来自前端 save 对话框。
+#[tauri::command]
+pub fn export_rules(state: State<'_, Arc<AppState>>, path: String) -> Result<RulesFileStats, String> {
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err("导出路径为空".to_string());
+    }
+    let rules = load_specs(&state)?;
+    let whitelist = state
+        .whitelist
+        .read()
+        .map(|w| w.clone())
+        .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
+    let blacklist = state
+        .blacklist
+        .read()
+        .map(|b| b.clone())
+        .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
+    let bundle = RulesBundle {
+        format: "aiguard.rules".to_string(),
+        version: 1,
+        exported_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        rules: rules.clone(),
+        whitelist: whitelist.clone(),
+        blacklist: blacklist.clone(),
+    };
+    let json = serde_json::to_string_pretty(&bundle).map_err(|e| safe_err(&e))?;
+    std::fs::write(&path, json).map_err(|e| format!("写入文件失败: {}", e))?;
+    Ok(RulesFileStats {
+        path,
+        rules: rules.len(),
+        whitelist: whitelist.len(),
+        blacklist: blacklist.len(),
+    })
+}
+
+/// 导入预览：只读文件并校验，返回合并影响统计 + 原始包（确认后原样回传 apply）。
+/// 规则整体必须能通过 Detector 编译（任一正则非法即拒绝），坏包在预览阶段就被挡下。
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportPreview {
+    pub rules_new: usize,
+    pub rules_update: usize,
+    pub whitelist_new: usize,
+    pub blacklist_new: usize,
+    pub bundle: RulesBundle,
+}
+
+#[tauri::command]
+pub fn import_rules_preview(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<ImportPreview, String> {
+    let text =
+        std::fs::read_to_string(path.trim()).map_err(|e| format!("读取文件失败: {}", e))?;
+    let bundle: RulesBundle = serde_json::from_str(&text)
+        .map_err(|e| format!("文件不是有效的规则包 JSON: {}", safe_err(&e)))?;
+    bundle_format_ok(&bundle)?;
+    // 正则合法性整体校验（编译即验证；坏包不给进确认窗）
+    Detector::from_specs(&bundle.rules).map_err(|e| e)?;
+    let existing = load_specs(&state)?;
+    let rules_new = bundle
+        .rules
+        .iter()
+        .filter(|r| !existing.iter().any(|s| s.id == r.id))
+        .count();
+    let whitelist = state
+        .whitelist
+        .read()
+        .map(|w| w.clone())
+        .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
+    let whitelist_new = bundle
+        .whitelist
+        .iter()
+        .filter(|w| {
+            !whitelist
+                .iter()
+                .any(|e| e.kind == w.kind && e.pattern.eq_ignore_ascii_case(&w.pattern))
+        })
+        .count();
+    let blacklist = state
+        .blacklist
+        .read()
+        .map(|b| b.clone())
+        .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
+    let blacklist_new = bundle
+        .blacklist
+        .iter()
+        .filter(|b| {
+            !blacklist
+                .iter()
+                .any(|e| e.kind == b.kind && e.pattern.eq_ignore_ascii_case(&b.pattern))
+        })
+        .count();
+    Ok(ImportPreview {
+        rules_new,
+        rules_update: bundle.rules.len() - rules_new,
+        whitelist_new,
+        blacklist_new,
+        bundle,
+    })
+}
+
+/// 导入统计（返回给前端做结果提示）。
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportStats {
+    pub rules_new: usize,
+    pub rules_update: usize,
+    pub whitelist_new: usize,
+    pub blacklist_new: usize,
+}
+
+/// 应用导入（合并模式，不删除任何现有条目）：
+/// - 规则按 id 匹配：存在则整条更新（含内置规则的动作 / 开关 / 正则），不存在则追加；
+/// - 白 / 黑名单按 kind + pattern 去重后追加（现有条目保持原样，id 不复用包内值）。
+/// 合并后的规则整体再次经 Detector 校验并热重建。
+#[tauri::command]
+pub fn import_rules_apply(state: State<'_, Arc<AppState>>, bundle: RulesBundle) -> Result<ImportStats, String> {
+    bundle_format_ok(&bundle)?;
+    let mut specs = load_specs(&state)?;
+    let mut rules_new = 0usize;
+    let mut rules_update = 0usize;
+    for r in bundle.rules {
+        if let Some(pos) = specs.iter().position(|s| s.id == r.id) {
+            specs[pos] = r;
+            rules_update += 1;
+        } else {
+            specs.push(r);
+            rules_new += 1;
+        }
+    }
+    save_specs(&state, specs)?;
+
+    let mut whitelist = state
+        .whitelist
+        .read()
+        .map(|w| w.clone())
+        .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
+    let mut whitelist_new = 0usize;
+    for w in bundle.whitelist {
+        if whitelist
+            .iter()
+            .any(|e| e.kind == w.kind && e.pattern.eq_ignore_ascii_case(&w.pattern))
+        {
+            continue;
+        }
+        let mut entry = w;
+        entry.id = format!("wl.{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+        whitelist.push(entry);
+        whitelist_new += 1;
+    }
+    if whitelist_new > 0 {
+        persist_whitelist(&state, whitelist)?;
+    }
+
+    let mut blacklist = state
+        .blacklist
+        .read()
+        .map(|b| b.clone())
+        .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
+    let mut blacklist_new = 0usize;
+    for b in bundle.blacklist {
+        if blacklist
+            .iter()
+            .any(|e| e.kind == b.kind && e.pattern.eq_ignore_ascii_case(&b.pattern))
+        {
+            continue;
+        }
+        let mut entry = b;
+        entry.id = format!("bl.{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+        blacklist.push(entry);
+        blacklist_new += 1;
+    }
+    if blacklist_new > 0 {
+        persist_blacklist(&state, blacklist)?;
+    }
+
+    Ok(ImportStats {
+        rules_new,
+        rules_update,
+        whitelist_new,
+        blacklist_new,
+    })
+}
+
+/// 应用内置规则预设（conservative / balanced / aggressive）：只改内置规则的开关与动作，
+/// 自定义规则与黑 / 白名单不动。返回更新后的完整规则列表（save_specs 内含热重建）。
+#[tauri::command]
+pub fn apply_rule_preset(
+    state: State<'_, Arc<AppState>>,
+    preset: String,
+) -> Result<Vec<RuleSpec>, String> {
+    if !matches!(
+        preset.as_str(),
+        aiguard_core::detector::PRESET_CONSERVATIVE
+            | aiguard_core::detector::PRESET_BALANCED
+            | aiguard_core::detector::PRESET_AGGRESSIVE
+    ) {
+        return Err(format!("未知预设: {}", preset));
+    }
+    let specs = load_specs(&state)?;
+    let new_specs = aiguard_core::detector::apply_preset_to_builtin(specs, &preset);
+    save_specs(&state, new_specs.clone())?;
+    Ok(new_specs)
+}
+
+/// 当前内置规则预设档位：与三档映射逐一比对，不完全一致即 custom（用户改过内置规则）。
+#[tauri::command]
+pub fn get_rule_preset(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    let specs = load_specs(&state)?;
+    Ok(aiguard_core::detector::preset_of_specs(&specs).to_string())
+}
+
 // ─────────────────────────── 防护中心（防护信号审计） ───────────────────────────
 
 use std::collections::HashMap as CmdHashMap;
