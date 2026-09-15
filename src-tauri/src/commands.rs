@@ -5,6 +5,7 @@ use std::sync::Arc;
 use aiguard_core::audit::SIGNAL_CATALOG;
 use aiguard_core::detector::{default_rule_specs, Detector, RuleSpec};
 use aiguard_core::secure::RestoreLimits;
+use aiguard_core::semantic::SemanticConfig;
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
@@ -635,6 +636,51 @@ pub fn apply_rule_preset(
 pub fn get_rule_preset(state: State<'_, Arc<AppState>>) -> Result<String, String> {
     let specs = load_specs(&state)?;
     Ok(aiguard_core::detector::preset_of_specs(&specs).to_string())
+}
+
+// ─────────────────────────── 语义检测层（熵值 / 姓名 / 地址 / 机构 / 产品代号） ───────────────────────────
+
+/// 语义配置的 KV 键。
+const KV_SEMANTIC_CONFIG: &str = "semantic.config";
+
+/// 读取语义检测层配置。
+#[tauri::command]
+pub fn get_semantic_config(state: State<'_, Arc<AppState>>) -> Result<SemanticConfig, String> {
+    Ok(load_semantic_config(&state))
+}
+
+/// 保存语义检测层配置：清洗 → 落盘 → 连同当前规则规格热重建 Detector。
+///
+/// 重建失败（正则规则本身坏了）不落盘，返回 Err——语义配置与规则是同一个
+/// Detector 快照，不能只改一半。
+#[tauri::command]
+pub fn set_semantic_config(
+    state: State<'_, Arc<AppState>>,
+    config: SemanticConfig,
+) -> Result<SemanticConfig, String> {
+    let mut cfg = config;
+    cfg.sanitize();
+    let specs = load_specs(&state)?;
+    let detector = aiguard_core::detector::Detector::from_specs(&specs)?.with_semantic(&cfg);
+    let json = serde_json::to_string(&cfg).map_err(|e| safe_err(&e))?;
+    state.store.kv_set(KV_SEMANTIC_CONFIG, &json)?;
+    let arc = std::sync::Arc::new(detector);
+    match state.detector.write() {
+        Ok(mut g) => *g = arc,
+        Err(poisoned) => *poisoned.into_inner() = arc,
+    }
+    Ok(cfg)
+}
+
+/// 从 KV 读语义配置（损坏 / 缺失时回默认值）。
+fn load_semantic_config(state: &Arc<AppState>) -> SemanticConfig {
+    state
+        .store
+        .kv_get(KV_SEMANTIC_CONFIG)
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str::<SemanticConfig>(&json).ok())
+        .unwrap_or_default()
 }
 
 // ─────────────────────────── 防护中心（防护信号审计） ───────────────────────────
@@ -1980,8 +2026,11 @@ fn save_specs(state: &Arc<AppState>, specs: Vec<RuleSpec>) -> Result<(), String>
 }
 
 /// 启动时按 kv 持久化的规则规格重建 Detector（main.rs setup 调用）。
+/// 语义配置一并注入（语义重建失败只降级为默认关闭，不影响正则规则）。
 pub fn init_rules(state: &Arc<AppState>) {
-    match load_specs(state).and_then(|specs| Detector::from_specs(&specs)) {
+    let semantic = load_semantic_config(state);
+    let build = |specs: Vec<RuleSpec>| Detector::from_specs(&specs).map(|d| d.with_semantic(&semantic));
+    match load_specs(state).and_then(build) {
         Ok(detector) => {
             let arc = Arc::new(detector);
             match state.detector.write() {

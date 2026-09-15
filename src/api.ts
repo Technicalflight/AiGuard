@@ -1243,3 +1243,25 @@ export async function applyRulePreset(preset: Exclude<RulePreset, "custom">): Pr
   if (!isTauri()) return MOCK_RULES.map((r) => ({ ...r }));
   return tauriInvoke<RuleSpec[]>("apply_rule_preset", { preset });
 }
+
+// ─────────── 语义检测层（熵值 / 姓名 / 地址 / 机构 / 产品代号白名单） ───────────
+
+export interface SemanticConfig {
+  entropy: boolean;
+  person: boolean;
+  org: boolean;
+  address: boolean;
+  terms: string[];
+}
+
+export async function getSemanticConfig(): Promise<SemanticConfig> {
+  if (!isTauri()) {
+    return { entropy: false, person: false, org: false, address: true, terms: [] };
+  }
+  return tauriInvoke<SemanticConfig>("get_semantic_config");
+}
+
+export async function setSemanticConfig(config: SemanticConfig): Promise<SemanticConfig> {
+  if (!isTauri()) return { ...config };
+  return tauriInvoke<SemanticConfig>("set_semantic_config", { config });
+}

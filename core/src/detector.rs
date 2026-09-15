@@ -341,16 +341,34 @@ pub fn regex_test_hits(regex_src: &str, sample: &str) -> Result<Vec<RegexHit>, S
 #[derive(Clone)]
 pub struct Detector {
     rules: Vec<Rule>,
+    /// 语义检测层（熵值 / 姓名 / 地址 / 机构 / 产品代号白名单）。
+    /// 默认全关——由 `set_semantic` / `with_semantic` 显式启用。
+    semantic: crate::semantic::SemanticEngine,
 }
 
 impl Detector {
     /// 由规格列表编译构建；任一正则非法即返回 Err。
+    /// 语义层默认全关（需要时用 [`Detector::with_semantic`] 启用）。
     pub fn from_specs(specs: &[RuleSpec]) -> Result<Detector, String> {
         let mut rules = Vec::with_capacity(specs.len());
         for spec in specs {
             rules.push(compile_rule(spec)?);
         }
-        Ok(Detector { rules })
+        Ok(Detector {
+            rules,
+            semantic: crate::semantic::SemanticEngine::disabled(),
+        })
+    }
+
+    /// 启用语义检测层（链式）：语义命中恒为 Mask，正则命中优先占位。
+    pub fn with_semantic(mut self, cfg: &crate::semantic::SemanticConfig) -> Detector {
+        self.set_semantic(cfg);
+        self
+    }
+
+    /// 替换语义检测层配置（热更新路径用）。
+    pub fn set_semantic(&mut self, cfg: &crate::semantic::SemanticConfig) {
+        self.semantic = crate::semantic::SemanticEngine::new(cfg);
     }
 
     /// 使用全部内置默认规则构建（enabled = true，action = Mask）。
@@ -430,6 +448,19 @@ impl Detector {
                     action: rule.action,
                 });
             }
+        }
+        // 语义层追加（熵值 / 姓名 / 地址 / 机构 / 产品代号白名单）：
+        // 恒 Mask；字节偏移转字符偏移后与正则命中一起参与排序去重。
+        // sort_by 是稳定排序，正则命中先入列，同位冲突时正则优先。
+        for h in self.semantic.hits(text) {
+            let start = text[..h.start].chars().count();
+            let text_len = text[h.start..h.start + h.len].chars().count();
+            raw.push(Hit {
+                tag: h.tag.to_string(),
+                text_len,
+                start,
+                action: Action::Mask,
+            });
         }
         // 按 start 升序；同起点时更长的命中优先，避免同一文本被两个规则各报一次后短者占用区间
         raw.sort_by(|a, b| a.start.cmp(&b.start).then(b.text_len.cmp(&a.text_len)));

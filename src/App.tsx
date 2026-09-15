@@ -87,8 +87,11 @@ import {
   importRulesApply,
   getRulePreset,
   applyRulePreset,
+  getSemanticConfig,
+  setSemanticConfig,
   type RegexHit,
   type ImportPreview,
+  type SemanticConfig,
   type ShortcutState,
   type ShortcutConfig,
   type UpdateState,
@@ -2146,6 +2149,108 @@ function RulesTransferCard({ onChanged }: { onChanged: () => void }) {
   );
 }
 
+// ─────────── 语义检测卡片（熵值 / 姓名 / 地址 / 机构 / 产品代号白名单） ───────────
+
+/** 语义检测流水线：正则层之后的第二级引擎，每级独立开关，命中恒为脱敏。 */
+function SemanticCard() {
+  const [cfg, setCfg] = useState<SemanticConfig | null>(null);
+  const [termsText, setTermsText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    getSemanticConfig()
+      .then((c) => {
+        setCfg(c);
+        setTermsText(c.terms.join("\n"));
+      })
+      .catch((e) => setErr(errMsg(e)));
+  }, []);
+
+  const save = async (next: SemanticConfig) => {
+    setBusy(true);
+    setErr("");
+    setNotice("");
+    try {
+      const saved = await setSemanticConfig(next);
+      setCfg(saved);
+      setTermsText(saved.terms.join("\n"));
+      setNotice(t("已保存并即时生效"));
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!cfg) {
+    return <div className="card card-pad muted">{t("加载中…")}</div>;
+  }
+
+  // 展示名与说明存中文原文，渲染走 tb()（i18n:check 对变量渲染点的硬规矩）
+  const rows: { key: "entropy" | "person" | "org" | "address"; name: string; desc: string }[] = [
+    {
+      key: "address",
+      name: t("地址"),
+      desc: t("行政区划词典锚定省市区结构，或「街道 + 门牌号」强结构；默认开启"),
+    },
+    {
+      key: "person",
+      name: t("中文姓名"),
+      desc: t("百家姓 + 称谓 / 自称等上下文触发才报；裸姓名与常见词不报，宁可漏报不误伤"),
+    },
+    {
+      key: "org",
+      name: t("机构名 / 学校名"),
+      desc: t("大学 / 医院 / 银行 / 公司等强后缀锚定，代词与方位词前缀自动排除"),
+    },
+    {
+      key: "entropy",
+      name: t("高熵串"),
+      desc: t("无法归类的凭据形态（混合大小写与数字）；哈希校验和与 UUID 不报，默认关闭"),
+    },
+  ];
+
+  return (
+    <div className="card card-pad">
+      <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7, marginBottom: 14 }}>
+        {t("语义检测在正则规则之后执行，命中恒为脱敏（不拦截）。当前为纯启发式实现，不依赖任何模型；ONNX 模型加载留作后续可选能力。")}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {rows.map((r) => (
+          <div key={r.key} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Toggle on={cfg[r.key]} onChange={() => !busy && void save({ ...cfg, [r.key]: !cfg[r.key] })} />
+            <span style={{ fontWeight: 500, whiteSpace: "nowrap" }}>{tb(r.name)}</span>
+            <span className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>{tb(r.desc)}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 16 }}>
+        <span className="field-label">{t("产品代号白名单（每行一个词条，命中即脱敏）")}</span>
+        <textarea
+          className="input mono"
+          rows={4}
+          value={termsText}
+          onChange={(e) => setTermsText(e.target.value)}
+          placeholder={t("每行一个词条")}
+          style={{ width: "100%", marginTop: 6, resize: "vertical" }}
+        />
+        <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+          <button className="btn primary" disabled={busy} onClick={() => void save({ ...cfg, terms: termsText.split("\n") })}>
+            {t("保存白名单")}
+          </button>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {cfg.terms.length} {t("条")}
+          </span>
+        </div>
+      </div>
+      {notice && <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>{notice}</div>}
+      {err && <div className="form-err">{err}</div>}
+    </div>
+  );
+}
+
 function RulesPage() {
   const [rules, setRules] = useState<RuleSpec[]>([]);
   const [wl, setWl] = useState<WhitelistEntry[]>([]);
@@ -2444,6 +2549,10 @@ function RulesPage() {
       {/* ── 导入 / 导出规则包 ── */}
       <div className="section-title">{t("导入 / 导出")}</div>
       <RulesTransferCard onChanged={() => void refresh()} />
+
+      {/* ── 语义检测流水线 ── */}
+      <div className="section-title">{t("语义检测")}</div>
+      <SemanticCard />
 
       {/* ── 黑名单管理弹窗（执行顺序卡片节点打开） ── */}
       {listModal === "black" && (
