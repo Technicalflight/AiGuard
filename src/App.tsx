@@ -2264,11 +2264,12 @@ function maskValue(v: string): string {
   return v.slice(0, 2) + "*".repeat(hidden) + v.slice(-2);
 }
 
-/** 保险柜：出站请求凡命中条目值即按动作脱敏或拦截；模型命令点名键名或
- * 指向保护对象（.env / SSH 私钥 / 环境变量）时产生访问告警。 */
+/** 保险柜：出站请求凡命中凭据值条目即按动作脱敏或拦截；模型命令点名键名、
+ * 引用受保护文件 / 文件夹或指向内置保护对象时产生访问告警。 */
 function LockerCard() {
   const [cfg, setCfg] = useState<LockerConfig | null>(null);
   const [draft, setDraft] = useState<LockerEntry[]>([]);
+  const [newKind, setNewKind] = useState<"value" | "path">("value");
   const [newName, setNewName] = useState("");
   const [newValue, setNewValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2303,6 +2304,18 @@ function LockerCard() {
   const add = () => {
     const name = newName.trim();
     const value = newValue.trim();
+    if (newKind === "path") {
+      if (!value) {
+        setErr(t("请填入文件或文件夹路径"));
+        return;
+      }
+      setErr("");
+      // 路径条目键名可空（后端自动取路径尾段）
+      setDraft([...draft, { name, value, action: "mask", enabled: true, kind: "path" }]);
+      setNewName("");
+      setNewValue("");
+      return;
+    }
     if (!name || !value) {
       setErr(t("键名与值都要填"));
       return;
@@ -2312,7 +2325,7 @@ function LockerCard() {
       return;
     }
     setErr("");
-    setDraft([...draft, { name, value, action: "mask", enabled: true }]);
+    setDraft([...draft, { name, value, action: "mask", enabled: true, kind: "value" }]);
     setNewName("");
     setNewValue("");
   };
@@ -2325,6 +2338,8 @@ function LockerCard() {
     <div className="card card-pad">
       <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7, marginBottom: 14 }}>
         {t("保险柜存你录入的敏感值（密钥、口令等）：出站请求凡命中即按条目动作脱敏或拦截，模型只见到占位符；模型下发命令点名键名或读取 .env、SSH 私钥、环境变量等保护对象时产生访问告警。")}
+        <br />
+        {t("文件 / 文件夹条目产生访问告警（代理不执行命令，无法阻止本地读取，但「谁在碰」全程可见）；路径支持通配，如 *.pem 保护全部同名扩展文件。")}
       </div>
       {draft.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
@@ -2338,53 +2353,82 @@ function LockerCard() {
                   setDraft(n);
                 }}
               />
-              <span style={{ fontWeight: 500, whiteSpace: "nowrap" }}>{tb(e.name)}</span>
-              <span className="muted mono" style={{ fontSize: 12 }}>{maskValue(e.value)}</span>
-              <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
-                <button
-                  className={"btn" + (e.action === "mask" ? " primary" : "")}
-                  disabled={busy || !e.enabled}
-                  style={{ padding: "2px 10px", fontSize: 12 }}
-                  onClick={() => {
-                    const n = [...draft];
-                    n[i] = { ...e, action: "mask" };
-                    setDraft(n);
-                  }}
-                >
-                  {t("脱敏")}
-                </button>
-                <button
-                  className={"btn" + (e.action === "block" ? " primary" : "")}
-                  disabled={busy || !e.enabled}
-                  style={{ padding: "2px 10px", fontSize: 12 }}
-                  onClick={() => {
-                    const n = [...draft];
-                    n[i] = { ...e, action: "block" };
-                    setDraft(n);
-                  }}
-                >
-                  {t("拦截")}
-                </button>
-                <button
-                  className="btn"
-                  disabled={busy}
-                  style={{ padding: "2px 10px", fontSize: 12 }}
-                  onClick={() => setDraft(draft.filter((_, j) => j !== i))}
-                >
-                  {t("删除")}
-                </button>
+              <span
+                className="muted"
+                style={{ fontSize: 11, border: "1px solid var(--border, #ddd)", borderRadius: 4, padding: "1px 6px", whiteSpace: "nowrap" }}
+              >
+                {e.kind === "path" ? t("路径") : t("值")}
               </span>
+              <span style={{ fontWeight: 500, whiteSpace: "nowrap" }}>{tb(e.name)}</span>
+              <span className="muted mono" style={{ fontSize: 12 }}>
+                {e.kind === "path" ? e.value : maskValue(e.value)}
+              </span>
+              {e.kind !== "path" && (
+                <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+                  <button
+                    className={"btn" + (e.action === "mask" ? " primary" : "")}
+                    disabled={busy || !e.enabled}
+                    style={{ padding: "2px 10px", fontSize: 12 }}
+                    onClick={() => {
+                      const n = [...draft];
+                      n[i] = { ...e, action: "mask" };
+                      setDraft(n);
+                    }}
+                  >
+                    {t("脱敏")}
+                  </button>
+                  <button
+                    className={"btn" + (e.action === "block" ? " primary" : "")}
+                    disabled={busy || !e.enabled}
+                    style={{ padding: "2px 10px", fontSize: 12 }}
+                    onClick={() => {
+                      const n = [...draft];
+                      n[i] = { ...e, action: "block" };
+                      setDraft(n);
+                    }}
+                  >
+                    {t("拦截")}
+                  </button>
+                </span>
+              )}
+              <button
+                className="btn"
+                disabled={busy}
+                style={{ padding: "2px 10px", fontSize: 12, marginLeft: e.kind === "path" ? "auto" : 0 }}
+                onClick={() => setDraft(draft.filter((_, j) => j !== i))}
+              >
+                {t("删除")}
+              </button>
             </div>
           ))}
         </div>
       )}
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+        <span className="muted" style={{ fontSize: 12 }}>{t("新增类型")}</span>
+        <button
+          className={"btn" + (newKind === "value" ? " primary" : "")}
+          disabled={busy}
+          style={{ padding: "2px 10px", fontSize: 12 }}
+          onClick={() => setNewKind("value")}
+        >
+          {t("凭据值")}
+        </button>
+        <button
+          className={"btn" + (newKind === "path" ? " primary" : "")}
+          disabled={busy}
+          style={{ padding: "2px 10px", fontSize: 12 }}
+          onClick={() => setNewKind("path")}
+        >
+          {t("文件 / 文件夹")}
+        </button>
+      </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <input
           className="input"
           style={{ width: 180 }}
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
-          placeholder={t("键名")}
+          placeholder={newKind === "path" ? t("名称（选填，默认取路径）") : t("键名")}
           disabled={busy}
         />
         <input
@@ -2392,7 +2436,7 @@ function LockerCard() {
           style={{ flex: 1, minWidth: 220 }}
           value={newValue}
           onChange={(e) => setNewValue(e.target.value)}
-          placeholder={t("值")}
+          placeholder={newKind === "path" ? t("文件或文件夹路径，支持通配，如 D:\\secrets 或 *.pem") : t("值")}
           disabled={busy}
         />
         <button className="btn" disabled={busy} onClick={add}>
