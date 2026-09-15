@@ -2265,16 +2265,24 @@ function maskValue(v: string): string {
 }
 
 /** 保险柜：出站请求凡命中凭据值条目即按动作脱敏或拦截；模型命令点名键名、
- * 引用受保护文件 / 文件夹或指向内置保护对象时产生访问告警。 */
+ * 引用受保护文件 / 文件夹或指向内置保护对象时产生访问告警。
+ * 路径条目支持从资源管理器选择（文件 / 文件夹）或手输通配模式。 */
 function LockerCard() {
   const [cfg, setCfg] = useState<LockerConfig | null>(null);
   const [draft, setDraft] = useState<LockerEntry[]>([]);
-  const [newKind, setNewKind] = useState<"value" | "path">("value");
+  // 新增条目类型：file / dir 都落为 path 条目（kind），仅决定浏览器的打开方式
+  const [newKind, setNewKind] = useState<"value" | "file" | "dir">("value");
   const [newName, setNewName] = useState("");
   const [newValue, setNewValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [err, setErr] = useState("");
+  const isPathKind = newKind !== "value";
+
+  const browse = async () => {
+    const p = await pickPath(newKind === "dir" ? "folder" : "file");
+    if (p) setNewValue(p);
+  };
 
   useEffect(() => {
     getLockerConfig()
@@ -2304,7 +2312,7 @@ function LockerCard() {
   const add = () => {
     const name = newName.trim();
     const value = newValue.trim();
-    if (newKind === "path") {
+    if (isPathKind) {
       if (!value) {
         setErr(t("请填入文件或文件夹路径"));
         return;
@@ -2414,12 +2422,20 @@ function LockerCard() {
           {t("凭据值")}
         </button>
         <button
-          className={"btn" + (newKind === "path" ? " primary" : "")}
+          className={"btn" + (newKind === "file" ? " primary" : "")}
           disabled={busy}
           style={{ padding: "2px 10px", fontSize: 12 }}
-          onClick={() => setNewKind("path")}
+          onClick={() => setNewKind("file")}
         >
-          {t("文件 / 文件夹")}
+          {t("文件")}
+        </button>
+        <button
+          className={"btn" + (newKind === "dir" ? " primary" : "")}
+          disabled={busy}
+          style={{ padding: "2px 10px", fontSize: 12 }}
+          onClick={() => setNewKind("dir")}
+        >
+          {t("文件夹")}
         </button>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -2428,7 +2444,7 @@ function LockerCard() {
           style={{ width: 180 }}
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
-          placeholder={newKind === "path" ? t("名称（选填，默认取路径）") : t("键名")}
+          placeholder={isPathKind ? t("名称（选填，默认取路径）") : t("键名")}
           disabled={busy}
         />
         <input
@@ -2436,9 +2452,14 @@ function LockerCard() {
           style={{ flex: 1, minWidth: 220 }}
           value={newValue}
           onChange={(e) => setNewValue(e.target.value)}
-          placeholder={newKind === "path" ? t("文件或文件夹路径，支持通配，如 D:\\secrets 或 *.pem") : t("值")}
+          placeholder={isPathKind ? t("文件或文件夹路径，支持通配，如 D:\\secrets 或 *.pem") : t("值")}
           disabled={busy}
         />
+        {isPathKind && (
+          <button className="btn" disabled={busy} onClick={() => void browse()}>
+            {t("浏览…")}
+          </button>
+        )}
         <button className="btn" disabled={busy} onClick={add}>
           {t("添加")}
         </button>
