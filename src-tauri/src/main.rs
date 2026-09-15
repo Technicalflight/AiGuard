@@ -776,6 +776,12 @@ fn main() {
             commands::get_close_behavior,
             commands::set_close_behavior,
             commands::confirm_close,
+            commands::test_regex,
+            commands::export_rules,
+            commands::import_rules_preview,
+            commands::import_rules_apply,
+            commands::apply_rule_preset,
+            commands::get_rule_preset,
         ])
         .run(tauri::generate_context!())
         .expect("AI 安全卫士启动失败");

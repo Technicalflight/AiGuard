@@ -475,14 +475,33 @@ export async function removeBlacklistEntry(id: string): Promise<void> {
 
 /**
  * 调用系统资源管理器选择路径。返回所选完整路径；取消返回 null。
- * kind = "exe" → 单选可执行文件；kind = "folder" → 单选文件夹。
+ * kind = "exe" → 单选可执行文件；kind = "folder" → 单选文件夹；
+ * kind = "rules-open" / "rules-save" → 规则包 JSON 的打开 / 保存对话框。
  * 纯浏览器预览环境返回 null。
  */
-export async function pickPath(kind: "exe" | "folder"): Promise<string | null> {
+export async function pickPath(
+  kind: "exe" | "folder" | "rules-open" | "rules-save"
+): Promise<string | null> {
   if (!isTauri()) return null;
-  const { open } = await import("@tauri-apps/plugin-dialog");
+  const { open, save } = await import("@tauri-apps/plugin-dialog");
   if (kind === "folder") {
     const r = await open({ directory: true, multiple: false, title: t("选择文件夹") });
+    return typeof r === "string" ? r : null;
+  }
+  if (kind === "rules-save") {
+    const r = await save({
+      title: t("导出规则包"),
+      defaultPath: "aiguard-rules.json",
+      filters: [{ name: t("规则包 JSON"), extensions: ["json"] }],
+    });
+    return typeof r === "string" ? r : null;
+  }
+  if (kind === "rules-open") {
+    const r = await open({
+      multiple: false,
+      title: t("选择规则包"),
+      filters: [{ name: t("规则包 JSON"), extensions: ["json"] }],
+    });
     return typeof r === "string" ? r : null;
   }
   const r = await open({
@@ -1109,4 +1128,118 @@ export async function onCloseRequested(handler: () => void): Promise<() => void>
     handler();
   });
   return unlisten;
+}
+
+// ─────────── 规则工具箱（正则测试 / 导入导出 / 内置预设） ───────────
+
+/** 正则测试器的单条命中（start 为字符偏移，与后端 Detector 口径一致）。 */
+export interface RegexHit {
+  start: number;
+  len: number;
+  text: string;
+}
+
+/** 规则包文件（导入 / 导出 / 分享的统一载体；内容只有规则与名单配置）。 */
+export interface RulesBundle {
+  format: string;
+  version: number;
+  exported_at: number;
+  rules: RuleSpec[];
+  whitelist: WhitelistEntry[];
+  blacklist: BlacklistEntry[];
+}
+
+/** 导出结果统计。 */
+export interface RulesFileStats {
+  path: string;
+  rules: number;
+  whitelist: number;
+  blacklist: number;
+}
+
+/** 导入预览：合并影响统计 + 待确认的原始包。 */
+export interface ImportPreview {
+  rules_new: number;
+  rules_update: number;
+  whitelist_new: number;
+  blacklist_new: number;
+  bundle: RulesBundle;
+}
+
+/** 导入应用结果统计。 */
+export interface ImportStats {
+  rules_new: number;
+  rules_update: number;
+  whitelist_new: number;
+  blacklist_new: number;
+}
+
+/** 浏览器预览的近似模拟：JS RegExp 与 Rust regex 语义有差异（\b、lookaround），仅供预览。 */
+function mockRegexTest(regex: string, sample: string): RegexHit[] {
+  const re = new RegExp(regex, "g");
+  const hits: RegexHit[] = [];
+  for (const m of sample.matchAll(re)) {
+    if (m[0].length === 0) {
+      re.lastIndex++;
+      continue;
+    }
+    hits.push({ start: m.index ?? 0, len: m[0].length, text: m[0] });
+  }
+  return hits;
+}
+
+export async function testRegex(regex: string, sample: string): Promise<RegexHit[]> {
+  if (!isTauri()) return mockRegexTest(regex, sample);
+  return tauriInvoke<RegexHit[]>("test_regex", { regex, sample });
+}
+
+export async function exportRules(path: string): Promise<RulesFileStats> {
+  if (!isTauri())
+    return {
+      path,
+      rules: MOCK_RULES.length,
+      whitelist: MOCK_WHITELIST.length,
+      blacklist: MOCK_BLACKLIST.length,
+    };
+  return tauriInvoke<RulesFileStats>("export_rules", { path });
+}
+
+export async function importRulesPreview(path: string): Promise<ImportPreview> {
+  if (!isTauri())
+    return {
+      rules_new: 1,
+      rules_update: 0,
+      whitelist_new: 1,
+      blacklist_new: 0,
+      bundle: {
+        format: "aiguard.rules",
+        version: 1,
+        exported_at: 0,
+        rules: [],
+        whitelist: [],
+        blacklist: [],
+      },
+    };
+  return tauriInvoke<ImportPreview>("import_rules_preview", { path });
+}
+
+export async function importRulesApply(bundle: RulesBundle): Promise<ImportStats> {
+  if (!isTauri()) return { rules_new: 0, rules_update: 0, whitelist_new: 0, blacklist_new: 0 };
+  return tauriInvoke<ImportStats>("import_rules_apply", { bundle });
+}
+
+/**
+ * 内置规则预设档位：conservative / balanced / aggressive / custom（用户改过内置规则）。
+ * 档位由后端比对三档映射判定，不存在单独的持久化状态。
+ */
+export type RulePreset = "conservative" | "balanced" | "aggressive" | "custom";
+
+export async function getRulePreset(): Promise<RulePreset> {
+  if (!isTauri()) return "balanced";
+  return tauriInvoke<RulePreset>("get_rule_preset");
+}
+
+export async function applyRulePreset(preset: Exclude<RulePreset, "custom">): Promise<RuleSpec[]> {
+  if (!isTauri()) return MOCK_RULES.map((r) => ({ ...r }));
+  return tauriInvoke<RuleSpec[]>("apply_rule_preset", { preset });
 }

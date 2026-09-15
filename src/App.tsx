@@ -81,6 +81,14 @@ import {
   setCloseBehavior,
   confirmClose,
   onCloseRequested,
+  testRegex,
+  exportRules,
+  importRulesPreview,
+  importRulesApply,
+  getRulePreset,
+  applyRulePreset,
+  type RegexHit,
+  type ImportPreview,
   type ShortcutState,
   type ShortcutConfig,
   type UpdateState,
@@ -1600,6 +1608,500 @@ function errMsg(e: unknown): string {
   return tb(String(e));
 }
 
+// ─────────── 规则工具箱组件（执行顺序可视化 / 预设 / 测试器 / 导入导出） ───────────
+
+/**
+ * 规则执行顺序可视化：黑名单 → 白名单 → 检测规则 三层流水线。
+ * 把原本只在文档里的优先级规则画进 UI：每层显示当前条数与一句话语义，
+ * 箭头表达「上一层定结果，下一层才轮到」的短路关系。
+ */
+function PriorityFlow({ bl, wl, rules, enabled }: { bl: number; wl: number; rules: number; enabled: number }) {
+  const nodes: { dot: string; name: string; count: string; desc: string }[] = [
+    {
+      dot: "#B23B3B",
+      name: t("黑名单"),
+      count: t("条数：") + bl,
+      desc: t("命中即强制执行所选动作（拦截请求 / 强制脱敏），优先于一切"),
+    },
+    {
+      dot: "#0E8A5F",
+      name: t("白名单"),
+      count: t("条数：") + wl,
+      desc: t("命中则不拦截；关闭「仍执行脱敏」的条目完全直通"),
+    },
+    {
+      dot: "#35618F",
+      name: t("检测规则"),
+      count: t("启用中：") + `${enabled} / ${rules}`,
+      desc: t("按正则命中逐条处理：脱敏为占位符 / 拦截请求 / 仅告警"),
+    },
+  ];
+  return (
+    <div className="card card-pad">
+      <div style={{ display: "flex", alignItems: "stretch", gap: 0, flexWrap: "wrap" }}>
+        {nodes.map((n, i) => (
+          <div key={`node-${i}`} style={{ display: "flex", alignItems: "stretch", flex: "1 1 220px", minWidth: 0 }}>
+            {i > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "0 10px",
+                  color: "var(--muted, #8a938f)",
+                  flexShrink: 0,
+                }}
+                aria-hidden
+              >
+                <svg width="18" height="12" viewBox="0 0 18 12">
+                  <path d="M1 6h13M10 1.5L15 6l-5 4.5" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+            )}
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: "1px solid var(--line)",
+                borderRadius: 8,
+                padding: "10px 12px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span className={`sec-dot ${i === 0 ? "red" : i === 1 ? "green" : "amber"}`} aria-hidden />
+                <span style={{ fontWeight: 600 }}>{tb(n.name)}</span>
+                <span className="muted" style={{ fontSize: 12 }}>{n.count}</span>
+              </div>
+              <div className="muted" style={{ marginTop: 6, fontSize: 12, lineHeight: 1.6 }}>{tb(n.desc)}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
+        {t("请求进入守护域名时按此顺序评估：黑名单命中即定结果并短路，白名单命中决定是否拦截，最后由检测规则按正则逐条处理正文。")}
+      </div>
+    </div>
+  );
+}
+
+/** 三档预设的说明文案（与 core::detector 的映射一一对应）。 */
+const PRESET_DESCS: Record<string, () => string> = {
+  conservative: () =>
+    t("只守身份证、银行卡、API 密钥三类最高危（全部脱敏），其余关闭——打扰最小。"),
+  balanced: () =>
+    t("内置默认：身份证 / 手机号 / 银行卡 / 邮箱 / API 密钥脱敏，IP 关闭（避免版本号误伤）。"),
+  aggressive: () =>
+    t("全部六类启用，身份证 / 银行卡 / API 密钥升级为拦截（宁可拦下含高危信息的整条请求）。"),
+};
+
+/**
+ * 内置规则预设卡片：保守 / 均衡 / 激进三档一键切换。
+ * 应用前弹确认（会覆盖内置规则的开关与动作）；档位由后端比对判定，
+ * 用户手动改过任何内置规则即显示「自定义」。
+ */
+function RulePresetCard({ onChanged }: { onChanged: () => void }) {
+  const [preset, setPreset] = useState<string>("");
+  const [pending, setPending] = useState<"conservative" | "balanced" | "aggressive" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setPreset(await getRulePreset());
+      } catch (e) {
+        setErr(errMsg(e));
+      }
+    })();
+  }, []);
+
+  const apply = async () => {
+    if (!pending) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await applyRulePreset(pending);
+      setPreset(pending);
+      setMsg(
+        pending === "conservative"
+          ? t("已应用「保守」预设")
+          : pending === "aggressive"
+          ? t("已应用「激进」预设")
+          : t("已应用「均衡」预设")
+      );
+      setPending(null);
+      onChanged();
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const isCur = (p: string) => preset === p;
+  const options: { key: "conservative" | "balanced" | "aggressive"; label: string }[] = [
+    { key: "conservative", label: t("保守") },
+    { key: "balanced", label: t("均衡") },
+    { key: "aggressive", label: t("激进") },
+  ];
+
+  return (
+    <div className="card card-pad">
+      <HardenLine
+        tone="green"
+        title={t("内置规则预设")}
+        desc={t("一键切换内置规则的开关与动作；自定义规则与黑 / 白名单不受影响，正则不改动。")}
+      >
+        <div style={{ display: "flex", gap: 6 }}>
+          {options.map((o) => (
+            <button
+              key={o.key}
+              className={`btn mini ${isCur(o.key) ? "primary" : ""}`}
+              disabled={busy}
+              onClick={() => setPending(o.key)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </HardenLine>
+      {options.map((o) => (
+        <div key={o.key} className="muted" style={{ padding: "7px 0 0", fontSize: 12.5, lineHeight: 1.6 }}>
+          <span style={{ fontWeight: 500, color: isCur(o.key) ? "var(--brand, #0E8A5F)" : undefined }}>
+            {isCur(o.key) ? "● " : "○ "}
+          </span>
+          {`${o.label}${t("：")}${PRESET_DESCS[o.key]()}`}
+        </div>
+      ))}
+      {preset === "custom" && (
+        <div className="muted" style={{ paddingTop: 8, fontSize: 12.5 }}>
+          {t("当前为自定义配置（手动改过内置规则的开关或动作）；应用任一预设会覆盖这些改动。")}
+        </div>
+      )}
+      {msg && <div className="muted" style={{ paddingTop: 8 }}>{msg}</div>}
+      {err && <div className="form-err" style={{ marginTop: 10 }}>{err}</div>}
+
+      {pending && (
+        <Modal title={t("应用内置规则预设")} onClose={() => !busy && setPending(null)}>
+          <div style={{ lineHeight: 1.7 }}>
+            {`${t("将把内置规则的开关与动作覆盖为「")}${options.find((o) => o.key === pending)?.label ?? pending}${t("」档：")}${PRESET_DESCS[pending]()}`}
+          </div>
+          <div className="muted" style={{ marginTop: 10, fontSize: 12.5 }}>
+            {t("自定义规则与黑 / 白名单不受影响；随后可在规则列表里继续单独微调。")}
+          </div>
+          <div className="modal-foot" style={{ marginTop: 16, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" disabled={busy} onClick={() => setPending(null)}>
+              {t("取消")}
+            </button>
+            <button className="btn primary" disabled={busy} onClick={() => void apply()}>
+              {t("应用")}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/** FNV-1a 哈希 → 8 位 hex。测试器用它给每个命中生成稳定的假占位符尾缀（纯本地计算）。 */
+function fnv8hex(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * 正则测试器：输入正则 + 样本 → 高亮命中 + 实时预览替换结果。
+ * 走后端 test_regex（与线上引擎同一 regex crate），测试即线上行为；
+ * 浏览器预览模式用 JS RegExp 近似模拟。防抖 250ms。
+ */
+function RegexTesterCard({ onApplyToForm }: { onApplyToForm: (regex: string, tag: string) => void }) {
+  const [regex, setRegex] = useState("");
+  const [tag, setTag] = useState("");
+  const [sample, setSample] = useState("");
+  const [hits, setHits] = useState<RegexHit[] | null>(null);
+  const [err, setErr] = useState("");
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    if (!regex.trim() || !sample) {
+      setHits(null);
+      setErr("");
+      return;
+    }
+    const timer = setTimeout(() => {
+      setTesting(true);
+      testRegex(regex, sample)
+        .then((r) => {
+          setHits(r);
+          setErr("");
+        })
+        .catch((e) => {
+          setHits(null);
+          setErr(errMsg(e));
+        })
+        .finally(() => setTesting(false));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [regex, sample]);
+
+  const tagUp = (tag.trim() || "CUSTOM").toUpperCase();
+  // 样本分段：命中段高亮 / 替换预览用同一份切分
+  const segments: { text: string; hit: RegexHit | null }[] = [];
+  if (sample && hits) {
+    let cursor = 0;
+    // H2T：按「字符偏移」取段需要 Array.from 切（JS 字符串索引是 UTF-16 码元）
+    const chars = Array.from(sample);
+    for (const h of hits) {
+      if (h.start > cursor) segments.push({ text: chars.slice(cursor, h.start).join(""), hit: null });
+      segments.push({ text: chars.slice(h.start, h.start + h.len).join(""), hit: h });
+      cursor = h.start + h.len;
+    }
+    if (cursor < chars.length) segments.push({ text: chars.slice(cursor).join(""), hit: null });
+  }
+
+  return (
+    <div className="card card-pad">
+      <HardenLine
+        tone="green"
+        title={t("正则测试器")}
+        desc={t("与线上引擎同一套正则语义（Unicode \\b、不支持前后瞻）；测试通过后可一键填入下方新增规则。")}
+      />
+      <div className="form-grid" style={{ marginTop: 10 }}>
+        <label className="field" style={{ gridColumn: "1 / -1" }}>
+          <span className="field-label">{t("正则表达式")}</span>
+          <input
+            className="input mono"
+            value={regex}
+            spellCheck={false}
+            onChange={(e) => setRegex(e.target.value)}
+            placeholder={t("如：阿尔法计划|贝塔计划")}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">{t("占位符标签（可选）")}</span>
+          <input
+            className="input"
+            value={tag}
+            spellCheck={false}
+            onChange={(e) => setTag(e.target.value)}
+            placeholder={t("默认 CUSTOM")}
+          />
+        </label>
+        <div className="field" style={{ alignSelf: "end" }}>
+          <button
+            className="btn"
+            disabled={!regex.trim() || !hits || hits.length === 0}
+            onClick={() => onApplyToForm(regex, tagUp)}
+          >
+            {t("填入新增规则")}
+          </button>
+        </div>
+        <label className="field" style={{ gridColumn: "1 / -1" }}>
+          <span className="field-label">{t("测试样本")}</span>
+          <textarea
+            className="input mono"
+            rows={4}
+            maxLength={20000}
+            value={sample}
+            spellCheck={false}
+            onChange={(e) => setSample(e.target.value)}
+            placeholder={t("粘贴一段可能包含敏感信息的文本，实时查看命中与脱敏效果")}
+            style={{ resize: "vertical" }}
+          />
+        </label>
+      </div>
+
+      {err && <div className="form-err" style={{ marginTop: 8 }}>{err}</div>}
+      {sample && !err && (
+        <>
+          <div className="muted" style={{ marginTop: 10, fontSize: 12.5 }}>
+            {testing
+              ? t("测试中…")
+              : hits === null
+              ? t("输入正则与样本后自动测试")
+              : `${t("命中：")}${hits.length}`}
+          </div>
+          {hits && hits.length > 0 && (
+            <>
+              <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>{t("命中高亮")}</div>
+              <div
+                className="mono"
+                style={{
+                  marginTop: 4,
+                  padding: "10px 12px",
+                  border: "1px solid var(--line)",
+                  borderRadius: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all",
+                  lineHeight: 1.7,
+                  maxHeight: 180,
+                  overflowY: "auto",
+                }}
+              >
+                {segments.map((s, i) =>
+                  s.hit ? (
+                    <mark
+                      key={i}
+                      title={t("占位符标签")}
+                      style={{
+                        background: "rgba(14, 138, 95, 0.14)",
+                        color: "inherit",
+                        borderRadius: 3,
+                        padding: "1px 2px",
+                      }}
+                    >
+                      {s.text}
+                    </mark>
+                  ) : (
+                    <span key={i}>{s.text}</span>
+                  )
+                )}
+              </div>
+              <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>{t("替换结果预览")}</div>
+              <div
+                className="mono"
+                style={{
+                  marginTop: 4,
+                  padding: "10px 12px",
+                  border: "1px solid var(--line)",
+                  borderRadius: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all",
+                  lineHeight: 1.7,
+                  maxHeight: 180,
+                  overflowY: "auto",
+                }}
+              >
+                {segments.map((s, i) =>
+                  s.hit ? (
+                    <span key={i} style={{ color: "var(--brand, #0E8A5F)" }}>
+                      {`[[PII:${tagUp}:${fnv8hex(`${tagUp}:${s.hit.text}`)}]]`}
+                    </span>
+                  ) : (
+                    <span key={i}>{s.text}</span>
+                  )
+                )}
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 规则导入 / 导出 / 分享：JSON 规则包（format = aiguard.rules，v1）。
+ * 导出 = 全部规则（含内置的改动）+ 白名单 + 黑名单；导入 = 合并模式
+ * （规则按 id 更新 / 追加，名单按 kind+pattern 去重追加，不删除任何现有条目），
+ * 先读文件出预览，确认后才落库。导出的文件即分享载体。
+ */
+function RulesTransferCard({ onChanged }: { onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+
+  const doExport = async () => {
+    setBusy(true);
+    setMsg("");
+    setErr("");
+    try {
+      const path = await pickPath("rules-save");
+      if (!path) return; // 用户取消
+      const st = await exportRules(path);
+      setMsg(
+        `${t("已导出：")}${st.path}${t("（")}${t("规则")}${st.rules} / ${t("白名单")}${st.whitelist} / ${t("黑名单")}${st.blacklist}${t("）")}`
+      );
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doImport = async () => {
+    setBusy(true);
+    setMsg("");
+    setErr("");
+    try {
+      const path = await pickPath("rules-open");
+      if (!path) return; // 用户取消
+      const p = await importRulesPreview(path);
+      setPreview(p);
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyImport = async () => {
+    if (!preview) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const st = await importRulesApply(preview.bundle);
+      setMsg(
+        `${t("导入完成：")} ${t("规则新增")}${st.rules_new} / ${t("规则更新")}${st.rules_update} / ${t("白名单新增")}${st.whitelist_new} / ${t("黑名单新增")}${st.blacklist_new}`
+      );
+      setPreview(null);
+      onChanged();
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card card-pad">
+      <HardenLine
+        tone="green"
+        title={t("导入 / 导出规则包")}
+        desc={t("JSON 格式，可直接分享给他人（社区规则包）。导出包含全部规则与名单配置，不含任何流量数据；导入为合并模式，不删除现有配置。")}
+      >
+        <div style={{ display: "flex", gap: 6 }}>
+          <button className="btn mini" disabled={busy} onClick={() => void doImport()}>
+            {t("导入")}
+          </button>
+          <button className="btn mini" disabled={busy} onClick={() => void doExport()}>
+            {t("导出")}
+          </button>
+        </div>
+      </HardenLine>
+      {msg && <div className="muted" style={{ paddingTop: 8, wordBreak: "break-all" }}>{msg}</div>}
+      {err && <div className="form-err" style={{ marginTop: 10 }}>{err}</div>}
+
+      {preview && (
+        <Modal title={t("确认导入规则包")} onClose={() => !busy && setPreview(null)}>
+          <div style={{ lineHeight: 1.8 }}>
+            <div>{`${t("规则新增")}${t("：")}${preview.rules_new} ${t("条")}`}</div>
+            <div>{`${t("规则更新")}${t("：")}${preview.rules_update} ${t("条")}`}</div>
+            <div>{`${t("白名单新增")}${t("：")}${preview.whitelist_new} ${t("条")}`}</div>
+            <div>{`${t("黑名单新增")}${t("：")}${preview.blacklist_new} ${t("条")}`}</div>
+          </div>
+          <div className="muted" style={{ marginTop: 10, fontSize: 12.5, lineHeight: 1.6 }}>
+            {t("合并导入不会删除任何现有条目；已存在的规则按 ID 更新为包内版本。正则非法的规则包会在预览阶段被拒绝。")}
+          </div>
+          <div className="modal-foot" style={{ marginTop: 16, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" disabled={busy} onClick={() => setPreview(null)}>
+              {t("取消")}
+            </button>
+            <button className="btn primary" disabled={busy} onClick={() => void applyImport()}>
+              {t("导入")}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function RulesPage() {
   const [rules, setRules] = useState<RuleSpec[]>([]);
   const [wl, setWl] = useState<WhitelistEntry[]>([]);
@@ -1778,8 +2280,23 @@ function RulesPage() {
     <div className="page-pad">
       <div className="notice" style={{ marginBottom: 14 }}>
         <ShieldIcon size={18} />
-        {t("内置规则可编辑、可恢复默认；支持新增自定义规则。名单优先级：黑名单（强制执行所选动作）＞ 白名单（不拦截，脱敏可选）＞ 检测规则")}
+        {t("内置规则可编辑、可恢复默认；支持新增自定义规则、导入导出规则包。")}
       </div>
+
+      {/* ── 执行顺序（优先级可视化） ── */}
+      <div className="section-title" style={{ marginTop: 0 }}>
+        {t("执行顺序")}
+      </div>
+      <PriorityFlow
+        bl={bl.length}
+        wl={wl.length}
+        rules={rules.length}
+        enabled={rules.filter((r) => r.enabled).length}
+      />
+
+      {/* ── 内置规则预设 ── */}
+      <div className="section-title">{t("内置规则预设")}</div>
+      <RulePresetCard onChanged={() => void refresh()} />
 
       {/* ── 检测规则 ── */}
       <div className="section-title" style={{ marginTop: 0 }}>
@@ -1819,6 +2336,15 @@ function RulesPage() {
           </div>
         ))}
       </div>
+
+      {/* ── 正则测试器 ── */}
+      <div className="section-title">{t("正则测试器")}</div>
+      <RegexTesterCard
+        onApplyToForm={(regex, tag) => {
+          setNewRule((f) => ({ ...f, regex, tag: tag === "CUSTOM" ? "" : tag }));
+          setNewErr("");
+        }}
+      />
 
       {/* ── 新增自定义规则 ── */}
       <div className="section-title">{t("新增自定义规则")}</div>
@@ -2048,6 +2574,10 @@ function RulesPage() {
       <div className="muted" style={{ marginTop: 10, paddingBottom: 16 }}>
         {t("提示：名单优先级为 黑名单（命中后强制执行所选动作：拦截或脱敏）＞ 白名单（不拦截，脱敏可选）＞ 检测规则。进程名单通过本机")}{" "}{t("TCP 连接表将来源端口反解为进程路径后匹配；无法识别进程的连接按不在名单处理。")}
       </div>
+
+      {/* ── 导入 / 导出规则包 ── */}
+      <div className="section-title">{t("导入 / 导出")}</div>
+      <RulesTransferCard onChanged={() => void refresh()} />
 
       {/* 编辑规则弹窗 */}
       {editTarget && (
