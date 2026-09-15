@@ -476,16 +476,25 @@ export async function removeBlacklistEntry(id: string): Promise<void> {
 /**
  * 调用系统资源管理器选择路径。返回所选完整路径；取消返回 null。
  * kind = "exe" → 单选可执行文件；kind = "folder" → 单选文件夹；
+ * kind = "file" → 单选任意文件（保险柜路径条目用）；
  * kind = "rules-open" / "rules-save" → 规则包 JSON 的打开 / 保存对话框。
  * 纯浏览器预览环境返回 null。
  */
 export async function pickPath(
-  kind: "exe" | "folder" | "rules-open" | "rules-save"
+  kind: "exe" | "folder" | "file" | "rules-open" | "rules-save"
 ): Promise<string | null> {
   if (!isTauri()) return null;
   const { open, save } = await import("@tauri-apps/plugin-dialog");
   if (kind === "folder") {
     const r = await open({ directory: true, multiple: false, title: t("选择文件夹") });
+    return typeof r === "string" ? r : null;
+  }
+  if (kind === "file") {
+    const r = await open({
+      multiple: false,
+      title: t("选择文件"),
+      filters: [{ name: t("所有文件"), extensions: ["*"] }],
+    });
     return typeof r === "string" ? r : null;
   }
   if (kind === "rules-save") {
