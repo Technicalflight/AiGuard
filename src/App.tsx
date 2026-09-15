@@ -89,9 +89,13 @@ import {
   applyRulePreset,
   getSemanticConfig,
   setSemanticConfig,
+  getLockerConfig,
+  setLockerConfig,
   type RegexHit,
   type ImportPreview,
   type SemanticConfig,
+  type LockerConfig,
+  type LockerEntry,
   type ShortcutState,
   type ShortcutConfig,
   type UpdateState,
@@ -2251,6 +2255,162 @@ function SemanticCard() {
   );
 }
 
+// ─────────── 保险柜卡片（用户录入敏感值的出站防护 + 访问告警） ───────────
+
+/** 值打码展示：仅保留首尾各 2 字符，其余以星号替代（防肩窥）。 */
+function maskValue(v: string): string {
+  if (v.length <= 6) return "*".repeat(v.length);
+  const hidden = Math.min(v.length - 4, 12);
+  return v.slice(0, 2) + "*".repeat(hidden) + v.slice(-2);
+}
+
+/** 保险柜：出站请求凡命中条目值即按动作脱敏或拦截；模型命令点名键名或
+ * 指向保护对象（.env / SSH 私钥 / 环境变量）时产生访问告警。 */
+function LockerCard() {
+  const [cfg, setCfg] = useState<LockerConfig | null>(null);
+  const [draft, setDraft] = useState<LockerEntry[]>([]);
+  const [newName, setNewName] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    getLockerConfig()
+      .then((c) => {
+        setCfg(c);
+        setDraft(c.entries);
+      })
+      .catch((e) => setErr(errMsg(e)));
+  }, []);
+
+  const save = async (entries: LockerEntry[]) => {
+    setBusy(true);
+    setErr("");
+    setNotice("");
+    try {
+      const saved = await setLockerConfig({ entries });
+      setCfg(saved);
+      setDraft(saved.entries);
+      setNotice(t("已保存并即时生效"));
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const add = () => {
+    const name = newName.trim();
+    const value = newValue.trim();
+    if (!name || !value) {
+      setErr(t("键名与值都要填"));
+      return;
+    }
+    if (value.length < 8) {
+      setErr(t("值至少 8 个字符，过短的值会误伤正常文本"));
+      return;
+    }
+    setErr("");
+    setDraft([...draft, { name, value, action: "mask", enabled: true }]);
+    setNewName("");
+    setNewValue("");
+  };
+
+  if (!cfg) {
+    return <div className="card card-pad muted">{t("加载中…")}</div>;
+  }
+
+  return (
+    <div className="card card-pad">
+      <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7, marginBottom: 14 }}>
+        {t("保险柜存你录入的敏感值（密钥、口令等）：出站请求凡命中即按条目动作脱敏或拦截，模型只见到占位符；模型下发命令点名键名或读取 .env、SSH 私钥、环境变量等保护对象时产生访问告警。")}
+      </div>
+      {draft.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+          {draft.map((e, i) => (
+            <div key={`locker-row-${i}`} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Toggle
+                on={e.enabled}
+                onChange={() => {
+                  const n = [...draft];
+                  n[i] = { ...e, enabled: !e.enabled };
+                  setDraft(n);
+                }}
+              />
+              <span style={{ fontWeight: 500, whiteSpace: "nowrap" }}>{tb(e.name)}</span>
+              <span className="muted mono" style={{ fontSize: 12 }}>{maskValue(e.value)}</span>
+              <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+                <button
+                  className={"btn" + (e.action === "mask" ? " primary" : "")}
+                  disabled={busy || !e.enabled}
+                  style={{ padding: "2px 10px", fontSize: 12 }}
+                  onClick={() => {
+                    const n = [...draft];
+                    n[i] = { ...e, action: "mask" };
+                    setDraft(n);
+                  }}
+                >
+                  {t("脱敏")}
+                </button>
+                <button
+                  className={"btn" + (e.action === "block" ? " primary" : "")}
+                  disabled={busy || !e.enabled}
+                  style={{ padding: "2px 10px", fontSize: 12 }}
+                  onClick={() => {
+                    const n = [...draft];
+                    n[i] = { ...e, action: "block" };
+                    setDraft(n);
+                  }}
+                >
+                  {t("拦截")}
+                </button>
+                <button
+                  className="btn"
+                  disabled={busy}
+                  style={{ padding: "2px 10px", fontSize: 12 }}
+                  onClick={() => setDraft(draft.filter((_, j) => j !== i))}
+                >
+                  {t("删除")}
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          className="input"
+          style={{ width: 180 }}
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder={t("键名")}
+          disabled={busy}
+        />
+        <input
+          className="input mono"
+          style={{ flex: 1, minWidth: 220 }}
+          value={newValue}
+          onChange={(e) => setNewValue(e.target.value)}
+          placeholder={t("值")}
+          disabled={busy}
+        />
+        <button className="btn" disabled={busy} onClick={add}>
+          {t("添加")}
+        </button>
+        <button className="btn primary" disabled={busy} onClick={() => void save(draft)}>
+          {t("保存保险柜")}
+        </button>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {draft.length} {t("条")}
+        </span>
+      </div>
+      {notice && <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>{notice}</div>}
+      {err && <div className="form-err">{err}</div>}
+    </div>
+  );
+}
+
 function RulesPage() {
   const [rules, setRules] = useState<RuleSpec[]>([]);
   const [wl, setWl] = useState<WhitelistEntry[]>([]);
@@ -2554,6 +2714,10 @@ function RulesPage() {
       <div className="section-title">{t("语义检测")}</div>
       <SemanticCard />
 
+      {/* ── 保险柜（用户录入敏感值出站防护） ── */}
+      <div className="section-title">{t("保险柜")}</div>
+      <LockerCard />
+
       {/* ── 黑名单管理弹窗（执行顺序卡片节点打开） ── */}
       {listModal === "black" && (
         <Modal
@@ -2798,6 +2962,7 @@ const SEC_TONE: Record<string, "red" | "amber" | "green"> = {
   identity_swap: "red",
   cross_request_pollution: "red",
   tool_call_injection: "red",
+  locker_access: "amber",
   tool_call_rewrite: "amber",
   sse_anomaly: "amber",
   response_poison: "amber",

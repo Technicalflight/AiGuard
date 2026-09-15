@@ -838,6 +838,8 @@ fn purge_req_ctx(m: &mut HashMap<String, (Instant, ReqInfo)>, now: Instant) {
 pub struct AppState {
     /// 检测引擎（请求侧脱敏主链路；RwLock 支持运行时热更新规则）
     pub detector: RwLock<Arc<Detector>>,
+    /// 保险柜配置（响应侧访问告警读键名用；请求侧引擎在 Detector.locker 内）
+    pub locker: RwLock<aiguard_core::locker::LockerConfig>,
     /// 原文 ↔ 占位符映射表（仅内存；Arc 共享给还原管道）
     pub vault: Arc<Vault>,
     /// 还原管道参数
@@ -1084,6 +1086,7 @@ impl AppState {
         };
         AppState {
             detector: RwLock::new(Arc::new(Detector::with_default_rules())),
+            locker: RwLock::new(aiguard_core::locker::LockerConfig::default()),
             vault: Arc::new(Vault::new()),
             restore_limits: RwLock::new(restore_limits),
             audit: RwLock::new(audit),
@@ -1170,6 +1173,19 @@ impl AppState {
             Ok(g) => g.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         }
+    }
+
+    /// 保险柜启用条目的键名清单（响应侧访问告警用）。
+    pub fn locker_keys(&self) -> Vec<String> {
+        let cfg = match self.locker.read() {
+            Ok(g) => g.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        cfg.entries
+            .iter()
+            .filter(|e| e.enabled)
+            .map(|e| e.name.clone())
+            .collect()
     }
 
     /// 记录请求侧使用的会话（供响应侧对齐）。
@@ -1962,10 +1978,11 @@ mod tests {
     fn test_signal_catalog_shape() {
         assert_eq!(signal_name("dangerous_action"), "高危指令");
         assert_eq!(signal_name("tool_call_injection"), "工具注入");
+        assert_eq!(signal_name("locker_access"), "保险柜访问");
         assert_eq!(signal_name("error_leak"), "报错泄密");
         assert_eq!(signal_name("cross_request_pollution"), "记忆残留");
         assert_eq!(severity_str(Severity::Critical), "CRITICAL");
-        assert_eq!(SIGNAL_CATALOG.len(), 8);
+        assert_eq!(SIGNAL_CATALOG.len(), 9);
     }
 
     #[test]

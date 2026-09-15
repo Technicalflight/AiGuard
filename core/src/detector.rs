@@ -344,6 +344,9 @@ pub struct Detector {
     /// 语义检测层（熵值 / 姓名 / 地址 / 机构 / 产品代号白名单）。
     /// 默认全关——由 `set_semantic` / `with_semantic` 显式启用。
     semantic: crate::semantic::SemanticEngine,
+    /// 保险柜（用户录入敏感值的出站精确匹配）：动作按条目（Mask / Block）。
+    /// 默认空——由 `set_locker` / `with_locker` 显式启用。
+    locker: crate::locker::LockerEngine,
 }
 
 impl Detector {
@@ -357,6 +360,7 @@ impl Detector {
         Ok(Detector {
             rules,
             semantic: crate::semantic::SemanticEngine::disabled(),
+            locker: crate::locker::LockerEngine::disabled(),
         })
     }
 
@@ -369,6 +373,17 @@ impl Detector {
     /// 替换语义检测层配置（热更新路径用）。
     pub fn set_semantic(&mut self, cfg: &crate::semantic::SemanticConfig) {
         self.semantic = crate::semantic::SemanticEngine::new(cfg);
+    }
+
+    /// 启用保险柜（链式）：命中动作按条目（默认 Mask，可 Block）。
+    pub fn with_locker(mut self, cfg: &crate::locker::LockerConfig) -> Detector {
+        self.set_locker(cfg);
+        self
+    }
+
+    /// 替换保险柜配置（热更新路径用）。
+    pub fn set_locker(&mut self, cfg: &crate::locker::LockerConfig) {
+        self.locker = crate::locker::LockerEngine::new(cfg);
     }
 
     /// 使用全部内置默认规则构建（enabled = true，action = Mask）。
@@ -460,6 +475,18 @@ impl Detector {
                 text_len,
                 start,
                 action: Action::Mask,
+            });
+        }
+        // 保险柜命中（用户录入敏感值的精确匹配）：动作按条目（默认 Mask，可 Block）。
+        // 与语义层同为追加段，同位冲突时正则 / 语义优先。
+        for h in self.locker.scan(text) {
+            let start = text[..h.start].chars().count();
+            let text_len = text[h.start..h.start + h.len].chars().count();
+            raw.push(Hit {
+                tag: "LOCKER".to_string(),
+                text_len,
+                start,
+                action: h.action,
             });
         }
         // 按 start 升序；同起点时更长的命中优先，避免同一文本被两个规则各报一次后短者占用区间

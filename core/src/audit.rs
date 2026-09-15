@@ -31,6 +31,7 @@ pub const SIG_RESPONSE_POISON: &str = "response_poison";
 pub const SIG_CROSS_REQUEST_POLLUTION: &str = "cross_request_pollution";
 pub const SIG_DANGEROUS_ACTION: &str = "dangerous_action";
 pub const SIG_TOOL_CALL_INJECTION: &str = "tool_call_injection";
+pub const SIG_LOCKER_ACCESS: &str = "locker_access";
 
 /// 信号名 → 展示名（UI 卡片标题 / 日志防护点列）。
 pub fn signal_name(signal: &str) -> &'static str {
@@ -43,6 +44,7 @@ pub fn signal_name(signal: &str) -> &'static str {
         SIG_CROSS_REQUEST_POLLUTION => "记忆残留",
         SIG_DANGEROUS_ACTION => "高危指令",
         SIG_TOOL_CALL_INJECTION => "工具注入",
+        SIG_LOCKER_ACCESS => "保险柜访问",
         _ => "",
     }
 }
@@ -54,7 +56,7 @@ pub fn severity_str(s: Severity) -> &'static str {
 
 /// 信号目录：(信号名, 展示名, 一句话说明, 是否有实现)。
 /// `tool_call_rewrite` / `cross_request_pollution` 依赖主动核查，当前 `false`。
-pub const SIGNAL_CATALOG: [(&str, &str, &str, bool); 8] = [
+pub const SIGNAL_CATALOG: [(&str, &str, &str, bool); 9] = [
     (
         SIG_ERROR_LEAK,
         "报错泄密",
@@ -101,6 +103,12 @@ pub const SIGNAL_CATALOG: [(&str, &str, &str, bool); 8] = [
         SIG_TOOL_CALL_INJECTION,
         "工具注入",
         "MCP / 工具调用结果回传的内容里藏有破坏性命令或伪造系统标记，企图借模型之手执行（间接注入）",
+        true,
+    ),
+    (
+        SIG_LOCKER_ACCESS,
+        "保险柜访问",
+        "模型下发命令试图读取 .env、SSH 私钥、环境变量等保护对象，或点名了保险柜里的键名（只告警不改写）",
         true,
     ),
 ];
@@ -233,7 +241,8 @@ pub fn dedupe_findings(items: Vec<Finding>) -> Vec<Finding> {
 }
 
 /// 惰性编译的正则缓存（检测路径零编译开销）。
-/// 自动纳入 [`SECRET_KINDS`] 与 [`DANGER_PATTERNS`] 的模式，避免两处清单漂移。
+/// 自动纳入 [`SECRET_KINDS`]、[`DANGER_PATTERNS`] 与 [`LOCKER_OBJECT_PATTERNS`]
+/// 的模式，避免多处清单漂移。
 struct Rx(OnceLock<HashMap<&'static str, Regex>>);
 
 fn rx(pattern: &'static str) -> Option<&'static Regex> {
@@ -245,7 +254,8 @@ fn rx(pattern: &'static str) -> Option<&'static Regex> {
             .copied()
             .chain(SECRET_KINDS.iter().map(|(p, _, _)| *p))
             .chain(DANGER_PATTERNS.iter().map(|(p, _, _)| *p))
-            .chain(FORGED_LABEL_PATTERNS.iter().copied());
+            .chain(FORGED_LABEL_PATTERNS.iter().copied())
+            .chain(LOCKER_OBJECT_PATTERNS.iter().map(|(p, _, _)| *p));
         for p in all {
             if let Ok(r) = Regex::new(p) {
                 m.insert(p, r);
@@ -1246,6 +1256,67 @@ pub fn scan_tool_call_injection(body: &Value) -> Vec<Finding> {
     out
 }
 
+// ─────────────── 保险柜访问（locker_access，响应侧命令指向保护对象） ───────────────
+
+/// 保险柜保护对象的**强形态**：命令 / 路径里出现即视为试图访问。
+/// 只收结构可判的形态（文件名 / 环境变量枚举命令 / 进程环境引用），
+/// 不收散文措辞——「它想不想偷」不可判，但「它在碰什么」可判。
+const LOCKER_OBJECT_PATTERNS: [(&str, &str, &str); 9] = [
+    (r"\.env\b", "env_file", "引用 .env 凭据文件"),
+    (r"\.ssh[/\\][A-Za-z0-9_.-]{1,64}", "ssh_path", "访问 .ssh 目录"),
+    (r"\.aws[/\\](?:credentials|config)\b", "cloud_cred", "访问云厂商凭据文件"),
+    (r"\.(?:npmrc|netrc|git-credentials)\b", "cred_file", "访问本机凭据文件"),
+    (r"\bid_(?:rsa|ed25519|ecdsa)\b", "ssh_key", "引用 SSH 私钥"),
+    (r"\bprintenv\b", "env_dump", "枚举环境变量"),
+    (r"Get-ChildItem\s+env:", "env_dump", "枚举环境变量"),
+    (r"process\.env\.[A-Za-z_]\w{2,}", "env_ref", "读取进程环境变量"),
+    (r"reg(?:\.exe)?\s+query\b[^\n]{0,80}Environment", "reg_env", "读注册表环境变量"),
+];
+
+/// 保险柜访问扫描：模型下发文本（含工具调用参数）指向保护对象形态，
+/// 或点名了保险柜键名（键名长度 ≥4 才参与，防短名误伤）。
+/// 同一 kind 只报一次；evidence 只含形态与键名，不含保险柜值。
+pub fn scan_locker_access(text: &str, locker_keys: &[String]) -> Vec<Finding> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<Finding> = Vec::new();
+    let mut seen_kind: HashSet<String> = HashSet::new();
+
+    for (pattern, kind, desc) in LOCKER_OBJECT_PATTERNS.iter() {
+        if seen_kind.contains(*kind) {
+            continue;
+        }
+        let Some(re) = rx(pattern) else { continue };
+        if let Some(m) = re.find(text) {
+            let snippet: String = m.as_str().chars().take(120).collect();
+            seen_kind.insert(kind.to_string());
+            out.push(Finding::new(
+                SIG_LOCKER_ACCESS,
+                Severity::Medium,
+                &format!("{}: {}", desc, snippet),
+                kind,
+            ));
+        }
+    }
+
+    for key in locker_keys {
+        if key.chars().count() < 4 || seen_kind.contains("locker_key") {
+            continue;
+        }
+        if text.contains(key.as_str()) {
+            seen_kind.insert("locker_key".to_string());
+            out.push(Finding::new(
+                SIG_LOCKER_ACCESS,
+                Severity::Medium,
+                &format!("模型命令点名保险柜键名: {}", key),
+                "locker_key",
+            ));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1270,9 +1341,10 @@ mod tests {
         assert_eq!(signal_name(SIG_CROSS_REQUEST_POLLUTION), "记忆残留");
         assert_eq!(signal_name(SIG_DANGEROUS_ACTION), "高危指令");
         assert_eq!(signal_name(SIG_TOOL_CALL_INJECTION), "工具注入");
+        assert_eq!(signal_name(SIG_LOCKER_ACCESS), "保险柜访问");
         assert_eq!(signal_name("nope"), "");
         assert_eq!(severity_str(Severity::Critical), "CRITICAL");
-        assert_eq!(SIGNAL_CATALOG.len(), 8);
+        assert_eq!(SIGNAL_CATALOG.len(), 9);
         // 依赖主动核查的两个信号当前无实现
         let unimplemented: Vec<&str> = SIGNAL_CATALOG
             .iter()
@@ -1286,6 +1358,53 @@ mod tests {
         // Finding 的展示名
         let f = Finding::new(SIG_DANGEROUS_ACTION, Severity::Low, "e", "k");
         assert_eq!(f.display(), "高危指令");
+    }
+
+    // ─────────── 保险柜访问 ───────────
+
+    #[test]
+    fn test_locker_access_object_patterns() {
+        let text = r#"{"name":"Bash","arguments":{"command":"cat .env && printenv"}}"#;
+        let out = scan_locker_access(text, &[]);
+        assert_eq!(out.len(), 2, "env_file 与 env_dump 各一条: {:?}", out);
+        assert!(out.iter().all(|f| f.signal == SIG_LOCKER_ACCESS));
+        assert!(out.iter().all(|f| f.severity == Severity::Medium));
+        assert!(out.iter().any(|f| f.kind == "env_file"));
+        assert!(out.iter().any(|f| f.kind == "env_dump"));
+    }
+
+    #[test]
+    fn test_locker_access_process_env_and_ssh_key() {
+        let out = scan_locker_access(
+            r#"node -e "console.log(process.env.AWS_SECRET_ACCESS_KEY)""#,
+            &[],
+        );
+        assert!(out.iter().any(|f| f.kind == "env_ref"));
+        let out = scan_locker_access("scp ~/.ssh/id_ed25519 backup", &[]);
+        assert!(out.iter().any(|f| f.kind == "ssh_key"));
+    }
+
+    #[test]
+    fn test_locker_access_key_name_hit_once() {
+        let keys = vec!["OPENAI_API_KEY".to_string()];
+        let text = "echo $OPENAI_API_KEY; cat $OPENAI_API_KEY.bak";
+        let out = scan_locker_access(text, &keys);
+        assert_eq!(
+            out.iter().filter(|f| f.kind == "locker_key").count(),
+            1,
+            "同键名只报一次: {:?}",
+            out
+        );
+        // 短键名不参与（防误伤）
+        let short = vec!["abc".to_string()];
+        assert!(scan_locker_access("abc is here", &short).is_empty());
+        // 键名未出现时不报
+        assert!(scan_locker_access("nothing relevant", &keys).is_empty());
+    }
+
+    #[test]
+    fn test_locker_access_empty_text_no_findings() {
+        assert!(scan_locker_access("", &["SOME_KEY".to_string()].iter().map(|s| s.to_string()).collect::<Vec<_>>()).is_empty());
     }
 
     // ─────────── 报错泄密 ───────────
