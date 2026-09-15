@@ -64,6 +64,8 @@ windows-sys = { version = "0.61", features = [
     # 外部命令输出解码：MultiByteToWideChar / GetACP / GetOEMCP
     # （icacls / certutil / PowerShell 输出是系统代码页，不是 UTF-8）
     "Win32_Globalization",
+    # Node 客户端 CA 信任：写环境变量后广播 WM_SETTINGCHANGE（SendMessageTimeoutW）
+    "Win32_UI_WindowsAndMessaging",
    ] }
 
 # unix 侧只需要 libc 做两件事：
