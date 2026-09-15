@@ -1067,3 +1067,46 @@ export async function checkUpdate(): Promise<UpdateState> {
   if (!isTauri()) return cloneUpdateState(MOCK_UPDATE);
   return tauriInvoke<UpdateState>("check_update");
 }
+
+// ─────────── 主窗关闭行为 ───────────
+
+/**
+ * 主窗关闭行为（与后端 state::CloseBehavior 的字面量一一对应）：
+ * - `ask`：每次关闭时弹询问窗（默认）；
+ * - `exit`：直接退出程序；
+ * - `tray`：直接最小化到托盘。
+ */
+export type CloseBehavior = "ask" | "exit" | "tray";
+
+/** 询问窗里用户点的动作（cancel = 仅关闭弹窗，窗口保持原状）。 */
+export type CloseAction = "exit" | "tray" | "cancel";
+
+export async function getCloseBehavior(): Promise<CloseBehavior> {
+  if (!isTauri()) return "ask";
+  return tauriInvoke<CloseBehavior>("get_close_behavior");
+}
+
+/** 保存关闭行为（设置页三选项与询问窗「记住我的选择」共用同一入口）。 */
+export async function setCloseBehavior(behavior: CloseBehavior): Promise<CloseBehavior> {
+  if (!isTauri()) return behavior;
+  return tauriInvoke<CloseBehavior>("set_close_behavior", { behavior });
+}
+
+/**
+ * 询问窗选择回执。「退出」必须走后端：窗口销毁后前端不复存在，
+ * 前端自己 close 会再次触发 CloseRequested（死循环）。
+ */
+export async function confirmClose(action: CloseAction): Promise<void> {
+  if (!isTauri()) return;
+  return tauriInvoke<void>("confirm_close", { action });
+}
+
+/** 订阅 close-requested 事件（后端在 ask 模式下拦截关闭后 emit；浏览器环境为空实现）。 */
+export async function onCloseRequested(handler: () => void): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen("close-requested", () => {
+    handler();
+  });
+  return unlisten;
+}

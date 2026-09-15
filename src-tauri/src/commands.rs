@@ -2393,6 +2393,51 @@ pub async fn set_shortcut_config(
     Ok(shortcut_state(&app, &st))
 }
 
+// ═══════════════════════ 主窗关闭行为 ═══════════════════════
+
+/// 读取主窗关闭行为（ask / exit / tray）。
+#[tauri::command]
+pub fn get_close_behavior(state: State<'_, Arc<AppState>>) -> crate::state::CloseBehavior {
+    state.close_behavior()
+}
+
+/// 保存主窗关闭行为：设置页三选项与询问窗「记住我的选择」共用同一落盘入口。
+#[tauri::command]
+pub fn set_close_behavior(
+    state: State<'_, Arc<AppState>>,
+    behavior: crate::state::CloseBehavior,
+) -> Result<crate::state::CloseBehavior, String> {
+    state.apply_close_behavior(behavior)
+}
+
+/// 询问窗的选择回执：`exit` 退出 / `tray` 隐藏到托盘 / `cancel` 仅关弹窗。
+///
+/// 「记住我的选择」由前端在调用本命令**之前**经 `set_close_behavior` 落盘
+/// （保存失败时行为仍是 ask，下次照常询问，不阻塞本次动作）。
+/// 窗口销毁后前端不复存在，所以「退出」必须由这条命令驱动后端执行——
+/// 不能让前端自己 close（那会再次触发 CloseRequested 死循环）。
+#[tauri::command]
+pub fn confirm_close(
+    app: tauri::AppHandle,
+    action: String,
+) -> Result<(), String> {
+    match action.as_str() {
+        "exit" => {
+            crate::quit_app(&app);
+            Ok(())
+        }
+        "tray" => {
+            use tauri::Manager;
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.hide();
+            }
+            Ok(())
+        }
+        "cancel" => Ok(()),
+        _ => Err(format!("未知的关闭动作: {}", action)),
+    }
+}
+
 // ═══════════════════════ 更新检查 ═══════════════════════
 
 /// 更新检查状态（配置 + 最近结果 + 当前版本）。

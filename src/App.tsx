@@ -77,9 +77,14 @@ import {
   getUpdateState,
   setUpdateConfig,
   checkUpdate,
+  getCloseBehavior,
+  setCloseBehavior,
+  confirmClose,
+  onCloseRequested,
   type ShortcutState,
   type ShortcutConfig,
   type UpdateState,
+  type CloseBehavior,
 } from "./api";
 import { t, tb, useI18n, applyLang, type Lang } from "./i18n";
 
@@ -344,6 +349,77 @@ function Modal({
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
     </div>
+  );
+}
+
+// ─────────── 关闭询问弹窗 ───────────
+
+/**
+ * 主窗口关闭询问。
+ *
+ * 后端拦截了所有关闭路径（自绘标题栏 ✕、Alt+F4、任务栏关闭），
+ * 行为为「每次询问」时发 close-requested 事件到这里。
+ * 勾选「记住我的选择」时先落盘偏好、再执行动作；动作成功后窗口隐藏或
+ * 进程退出，onDone 主要服务于取消路径（ESC / 遮罩 / ✕）的收尾。
+ */
+function CloseAskModal({ onDone }: { onDone: () => void }) {
+  const [remember, setRemember] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // busy 的同步镜像：close 由 Modal 的 ESC/遮罩回调触发，闭包可能拿到旧 state
+  const busyRef = useRef(false);
+
+  // busy 期间禁止取消，避免「点了退出又立刻取消」的竞态
+  const close = useCallback(() => {
+    if (busyRef.current) return;
+    onDone();
+  }, [onDone]);
+
+  const act = async (action: "exit" | "tray") => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      if (remember) await setCloseBehavior(action);
+      await confirmClose(action);
+      // exit 后进程直接结束、tray 后窗口隐藏，到这里说明用户取消不了了
+    } catch (e) {
+      busyRef.current = false;
+      setBusy(false);
+      console.error(t("操作失败："), e);
+      // 失败保持弹窗打开，用户可重试或按 ✕ 取消（窗口保持打开）
+    }
+  };
+
+  return (
+    <Modal
+      title={t("关闭 AI 安全卫士")}
+      onClose={close}
+      footer={
+        <>
+          <button className="btn" disabled={busy} onClick={() => void act("tray")}>
+            {t("最小化到托盘")}
+          </button>
+          <button className="btn primary" disabled={busy} onClick={() => void act("exit")}>
+            {t("退出程序")}
+          </button>
+        </>
+      }
+    >
+      <div style={{ lineHeight: 1.7 }}>
+        {t("你正在关闭主窗口。退出程序会还原系统代理并停止守护；最小化到托盘则继续在后台运行。")}
+      </div>
+      <label
+        style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer" }}
+      >
+        <input
+          type="checkbox"
+          checked={remember}
+          onChange={(e) => setRemember(e.target.checked)}
+          style={{ accentColor: "#0E8A5F" }}
+        />
+        <span>{t("记住我的选择，不再询问")}</span>
+      </label>
+    </Modal>
   );
 }
 
@@ -3386,6 +3462,9 @@ function SettingsPage({
         </div>
       </div>
 
+      <div className="section-title">{t("关闭窗口")}</div>
+      <CloseBehaviorCard />
+
       <div className="section-title">{t("界面语言")}</div>
       <LanguageCard lang={lang} onChange={onChangeLang} />
 
@@ -3874,6 +3953,77 @@ function UpdateCard() {
   );
 }
 
+// ─────────── 设置：关闭窗口行为 ───────────
+
+/**
+ * 关闭行为三选项：每次询问 / 直接退出 / 直接最小化到托盘。
+ * 切换先本地生效再落盘，落盘失败回退（同语言切换的处理）。
+ */
+function CloseBehaviorCard() {
+  const [behavior, setBehavior] = useState<CloseBehavior>("ask");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setBehavior(await getCloseBehavior());
+      } catch (e) {
+        setErr(errMsg(e));
+      }
+    })();
+  }, []);
+
+  const save = async (next: CloseBehavior) => {
+    if (busy || next === behavior) return;
+    setBusy(true);
+    setMsg("");
+    setErr("");
+    const prev = behavior;
+    setBehavior(next);
+    try {
+      const saved = await setCloseBehavior(next);
+      setBehavior(saved);
+      setMsg(
+        saved === "exit"
+          ? t("已设为直接退出")
+          : saved === "tray"
+          ? t("已设为直接最小化到托盘")
+          : t("已设为每次询问")
+      );
+    } catch (e) {
+      setBehavior(prev);
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card card-pad">
+      <HardenLine
+        tone="green"
+        title={t("点击关闭按钮时")}
+        desc={t("自绘标题栏 ✕、Alt+F4 与任务栏关闭共用此行为；「每次询问」会弹出询问窗，可在窗内勾选记住选择。")}
+      >
+        <Dropdown
+          value={behavior}
+          disabled={busy}
+          options={[
+            { value: "ask", label: t("每次询问") },
+            { value: "exit", label: t("直接退出程序") },
+            { value: "tray", label: t("直接最小化到托盘") },
+          ]}
+          onChange={(v) => void save(v as CloseBehavior)}
+        />
+      </HardenLine>
+      {msg && <div className="muted" style={{ paddingTop: 8 }}>{msg}</div>}
+      {err && <div className="form-err" style={{ marginTop: 10 }}>{err}</div>}
+    </div>
+  );
+}
+
 // ─────────── 主应用 ───────────
 
 type PageKey = "home" | "requests" | "rules" | "security" | "audit" | "settings";
@@ -3920,6 +4070,7 @@ export default function App() {
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [lang, setLang] = useState<Lang>("zh");
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [closeAskOpen, setCloseAskOpen] = useState(false);
   const restoreEnabled = stats?.restore_enabled ?? true;
 
   // 启动时读语言与向导状态。两者失败都不该影响应用启动，因此整体吞掉异常。
@@ -3940,6 +4091,18 @@ export default function App() {
         // 读不到向导状态就不弹向导：宁可少弹一次，也不要因为读状态失败骚扰用户
       }
     })();
+  }, []);
+
+  // 关闭询问：后端拦截所有关闭路径（自绘标题栏 ✕ / Alt+F4 / 任务栏关闭）后发事件到这里，
+  // 由弹窗决定退出还是隐藏到托盘。浏览器预览模式下是空实现，不会误弹。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    onCloseRequested(() => setCloseAskOpen(true)).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
   }, []);
 
   /**
@@ -4157,6 +4320,8 @@ export default function App() {
           onClose={() => setWizardOpen(false)}
         />
       )}
+
+      {closeAskOpen && <CloseAskModal onDone={() => setCloseAskOpen(false)} />}
     </div>
   );
 }
