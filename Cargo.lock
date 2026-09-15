@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "aiguard"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aiguard-core",
  "anyhow",
@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "aiguard-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aho-corasick",
  "dashmap",
