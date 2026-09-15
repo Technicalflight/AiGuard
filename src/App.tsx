@@ -1384,12 +1384,12 @@ function RequestsPage() {
           <table className="data">
             <thead>
               <tr>
-                <th>{t("时间")}</th>
-                <th>{t("域名")}</th>
+                <th style={{ width: 130 }}>{t("时间")}</th>
+                <th style={{ width: "14%" }}>{t("域名")}</th>
                 <th>{t("路径")}</th>
-                <th>{t("命中类型")}</th>
-                <th>{t("动作")}</th>
-                <th>{t("哈希")}</th>
+                <th style={{ width: "11%" }}>{t("命中类型")}</th>
+                <th style={{ width: 76 }}>{t("动作")}</th>
+                <th style={{ width: 110 }}>{t("哈希")}</th>
                 <th style={{ width: 60 }}>{t("详情")}</th>
               </tr>
             </thead>
@@ -2373,7 +2373,10 @@ function LockerCard() {
                 {e.kind === "path" ? t("路径") : t("值")}
               </span>
               <span style={{ fontWeight: 500, whiteSpace: "nowrap" }}>{tb(e.name)}</span>
-              <span className="muted mono" style={{ fontSize: 12 }}>
+              <span
+                className="muted mono"
+                style={{ fontSize: 12, overflowWrap: "anywhere", minWidth: 0, flex: 1 }}
+              >
                 {e.kind === "path" ? e.value : maskValue(e.value)}
               </span>
               {e.kind !== "path" && (
@@ -2801,10 +2804,10 @@ function RulesPage() {
             <table className="data">
               <thead>
                 <tr>
-                  <th>{t("类型")}</th>
+                  <th style={{ width: 64 }}>{t("类型")}</th>
                   <th>{t("内容")}</th>
-                  <th>{t("命中动作")}</th>
-                  <th style={{ textAlign: "right" }}>{t("操作")}</th>
+                  <th style={{ width: 96 }}>{t("命中动作")}</th>
+                  <th style={{ width: 64, textAlign: "right" }}>{t("操作")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2813,11 +2816,7 @@ function RulesPage() {
                     <td>
                       <Badge text={b.kind === "domain" ? t("域名") : t("进程")} tone="gray" />
                     </td>
-                    <td
-                      className="mono"
-                      style={{ maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis" }}
-                      title={b.pattern}
-                    >
+                    <td className="mono" title={b.pattern}>
                       {b.pattern}
                     </td>
                     <td>
@@ -2897,10 +2896,10 @@ function RulesPage() {
             <table className="data">
               <thead>
                 <tr>
-                  <th>{t("类型")}</th>
+                  <th style={{ width: 64 }}>{t("类型")}</th>
                   <th>{t("内容")}</th>
-                  <th>{t("仍执行脱敏")}</th>
-                  <th style={{ textAlign: "right" }}>{t("操作")}</th>
+                  <th style={{ width: 96 }}>{t("仍执行脱敏")}</th>
+                  <th style={{ width: 64, textAlign: "right" }}>{t("操作")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2909,11 +2908,7 @@ function RulesPage() {
                     <td>
                       <Badge text={w.kind === "domain" ? t("域名") : t("进程")} tone="gray" />
                     </td>
-                    <td
-                      className="mono"
-                      style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" }}
-                      title={w.pattern}
-                    >
+                    <td className="mono" title={w.pattern}>
                       {w.pattern}
                     </td>
                     <td>
@@ -3405,11 +3400,11 @@ function SecurityPage() {
                 {t("⚠ 结果为未定（部分步骤无回执），不能视为「无风险」。")}
               </div>
             )}
-            <table className="data" style={{ marginTop: 10 }}>
+            <table className="data wrap-cells" style={{ marginTop: 10 }}>
               <thead>
                 <tr>
-                  <th>{t("维度")}</th>
-                  <th>{t("结论")}</th>
+                  <th style={{ width: "22%" }}>{t("维度")}</th>
+                  <th style={{ width: "26%" }}>{t("结论")}</th>
                   <th>{t("步骤")}</th>
                 </tr>
               </thead>
@@ -3478,11 +3473,11 @@ function SecurityPage() {
           <table className="data">
             <thead>
               <tr>
-                <th>{t("时间")}</th>
-                <th>{t("防护点")}</th>
-                <th>{t("严重度")}</th>
+                <th style={{ width: 130 }}>{t("时间")}</th>
+                <th style={{ width: 150 }}>{t("防护点")}</th>
+                <th style={{ width: 84 }}>{t("严重度")}</th>
                 <th>{t("说明")}</th>
-                <th>{t("会话")}</th>
+                <th style={{ width: 170 }}>{t("会话")}</th>
               </tr>
             </thead>
             <tbody>
@@ -3513,8 +3508,10 @@ function SecurityPage() {
                   </td>
                   {/* 证据串由后端拼装，内含中文标签（如 `[双向覆盖符]`、
                       `递归删除根目录/家目录`）——必须过 tb()，否则英文界面里
-                      只有这半截是中文 */}
-                  <td className="muted mono">{tb(e.evidence)}</td>
+                      只有这半截是中文；fixed 布局下截断，title 悬停看全文 */}
+                  <td className="muted mono" title={tb(e.evidence)}>
+                    {tb(e.evidence)}
+                  </td>
                   <td className="muted mono">{e.sid}</td>
                 </tr>
               ))}
@@ -3612,11 +3609,11 @@ function AuditPage() {
           <table className="data">
             <thead>
               <tr>
-                <th>{t("时间")}</th>
+                <th style={{ width: 130 }}>{t("时间")}</th>
                 <th>{t("域名")}</th>
-                <th>{t("命中类型")}</th>
-                <th>{t("动作")}</th>
-                <th>{t("请求哈希")}</th>
+                <th style={{ width: "11%" }}>{t("命中类型")}</th>
+                <th style={{ width: 76 }}>{t("动作")}</th>
+                <th style={{ width: 110 }}>{t("请求哈希")}</th>
                 <th style={{ width: 60 }}>{t("详情")}</th>
               </tr>
             </thead>
