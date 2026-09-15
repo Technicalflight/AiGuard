@@ -45,6 +45,22 @@ impl HttpHandler for AiGuardHandler {
         self.process_request(ctx, req).await
     }
 
+    /// CONNECT 隧道分流：**只对接管域名做 TLS 拦截**（MITM 需要客户端信任本地 CA），
+    /// 其余域名直接透传隧道——客户端与真实服务器直接握手，不需要信任本地 CA。
+    /// 之前默认全量拦截，导致非守护域名（如客户端自身的登录服务）连带 TLS 失败。
+    async fn should_intercept(&mut self, _ctx: &HttpContext, req: &Request<Body>) -> bool {
+        let host = req
+            .uri()
+            .host()
+            .map(|h| h.to_string())
+            .or_else(|| req.uri().authority().map(|a| a.to_string()))
+            .unwrap_or_default();
+        if host.is_empty() {
+            return false;
+        }
+        self.state.is_ai_host(&host)
+    }
+
     async fn handle_response(&mut self, ctx: &HttpContext, res: Response<Body>) -> Response<Body> {
         self.process_response(ctx, res).await
     }
