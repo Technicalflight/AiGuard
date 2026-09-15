@@ -381,7 +381,11 @@ function CloseAskModal({ onDone }: { onDone: () => void }) {
     try {
       if (remember) await setCloseBehavior(action);
       await confirmClose(action);
-      // exit 后进程直接结束、tray 后窗口隐藏，到这里说明用户取消不了了
+      // tray：窗口此刻已隐藏，但只是隐藏不是销毁——React 状态原样保留，
+      // 必须在这里收掉弹窗；否则从托盘 show 回来时 Modal 还挂在 busy 态，
+      // 整个弹窗点不动也关不掉（按钮全 disabled、close 被 busyRef 挡住）。
+      // exit：进程即将退出，这行大概率执行不到（IPC 不回包），仅作兜底。
+      if (action === "tray") onDone();
     } catch (e) {
       busyRef.current = false;
       setBusy(false);
