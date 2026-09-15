@@ -873,10 +873,11 @@ fn self_record(
         &ctx.restored_text,
         Some(&req_info.body_text),
     ));
-    // 保险柜访问（模型命令指向保护对象 / 点名保险柜键名；只告警不改写）
+    // 保险柜访问（模型命令指向保护对象 / 点名键名 / 引用受保护路径；只告警不改写）
     findings.extend(aiguard_core::audit::scan_locker_access(
         &ctx.restored_text,
         &state.locker_keys(),
+        &state.locker_paths(),
     ));
 
     if findings.is_empty() {

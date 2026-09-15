@@ -1175,7 +1175,7 @@ impl AppState {
         }
     }
 
-    /// 保险柜启用条目的键名清单（响应侧访问告警用）。
+    /// 保险柜凭据值条目的键名清单（响应侧点名告警用）。
     pub fn locker_keys(&self) -> Vec<String> {
         let cfg = match self.locker.read() {
             Ok(g) => g.clone(),
@@ -1183,8 +1183,21 @@ impl AppState {
         };
         cfg.entries
             .iter()
-            .filter(|e| e.enabled)
+            .filter(|e| e.enabled && e.kind == "value")
             .map(|e| e.name.clone())
+            .collect()
+    }
+
+    /// 保险柜路径保护条目清单（响应侧访问告警用）。
+    pub fn locker_paths(&self) -> Vec<String> {
+        let cfg = match self.locker.read() {
+            Ok(g) => g.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        cfg.entries
+            .iter()
+            .filter(|e| e.enabled && e.kind == "path")
+            .map(|e| e.value.clone())
             .collect()
     }
 

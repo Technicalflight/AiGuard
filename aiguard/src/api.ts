@@ -1271,6 +1271,8 @@ export interface LockerEntry {
   value: string;
   action: string;
   enabled: boolean;
+  /** value = 凭据值（出站脱敏/拦截）；path = 文件/文件夹（访问告警） */
+  kind: string;
 }
 
 export interface LockerConfig {

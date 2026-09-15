@@ -1274,9 +1274,10 @@ const LOCKER_OBJECT_PATTERNS: [(&str, &str, &str); 9] = [
 ];
 
 /// 保险柜访问扫描：模型下发文本（含工具调用参数）指向保护对象形态，
-/// 或点名了保险柜键名（键名长度 ≥4 才参与，防短名误伤）。
-/// 同一 kind 只报一次；evidence 只含形态与键名，不含保险柜值。
-pub fn scan_locker_access(text: &str, locker_keys: &[String]) -> Vec<Finding> {
+/// 或点名了保险柜键名（键名长度 ≥4 才参与，防短名误伤），
+/// 或引用了用户保护的文件 / 文件夹路径（通配后缀 / 末两段相邻 / 尾段，见 locker）。
+/// 同一 kind 只报一次；evidence 只含形态、键名与路径，不含保险柜值。
+pub fn scan_locker_access(text: &str, locker_keys: &[String], locker_paths: &[String]) -> Vec<Finding> {
     if text.is_empty() {
         return Vec::new();
     }
@@ -1311,6 +1312,21 @@ pub fn scan_locker_access(text: &str, locker_keys: &[String]) -> Vec<Finding> {
                 Severity::Medium,
                 &format!("模型命令点名保险柜键名: {}", key),
                 "locker_key",
+            ));
+        }
+    }
+
+    for path in locker_paths {
+        if seen_kind.contains("protected_path") {
+            break;
+        }
+        if crate::locker::path_hits_text(path, text) {
+            seen_kind.insert("protected_path".to_string());
+            out.push(Finding::new(
+                SIG_LOCKER_ACCESS,
+                Severity::Medium,
+                &format!("模型命令引用受保护路径: {}", path),
+                "protected_path",
             ));
         }
     }
@@ -1365,7 +1381,7 @@ mod tests {
     #[test]
     fn test_locker_access_object_patterns() {
         let text = r#"{"name":"Bash","arguments":{"command":"cat .env && printenv"}}"#;
-        let out = scan_locker_access(text, &[]);
+        let out = scan_locker_access(text, &[], &[]);
         assert_eq!(out.len(), 2, "env_file 与 env_dump 各一条: {:?}", out);
         assert!(out.iter().all(|f| f.signal == SIG_LOCKER_ACCESS));
         assert!(out.iter().all(|f| f.severity == Severity::Medium));
@@ -1378,9 +1394,10 @@ mod tests {
         let out = scan_locker_access(
             r#"node -e "console.log(process.env.AWS_SECRET_ACCESS_KEY)""#,
             &[],
+            &[],
         );
         assert!(out.iter().any(|f| f.kind == "env_ref"));
-        let out = scan_locker_access("scp ~/.ssh/id_ed25519 backup", &[]);
+        let out = scan_locker_access("scp ~/.ssh/id_ed25519 backup", &[], &[]);
         assert!(out.iter().any(|f| f.kind == "ssh_key"));
     }
 
@@ -1388,7 +1405,7 @@ mod tests {
     fn test_locker_access_key_name_hit_once() {
         let keys = vec!["OPENAI_API_KEY".to_string()];
         let text = "echo $OPENAI_API_KEY; cat $OPENAI_API_KEY.bak";
-        let out = scan_locker_access(text, &keys);
+        let out = scan_locker_access(text, &keys, &[]);
         assert_eq!(
             out.iter().filter(|f| f.kind == "locker_key").count(),
             1,
@@ -1397,14 +1414,42 @@ mod tests {
         );
         // 短键名不参与（防误伤）
         let short = vec!["abc".to_string()];
-        assert!(scan_locker_access("abc is here", &short).is_empty());
+        assert!(scan_locker_access("abc is here", &short, &[]).is_empty());
         // 键名未出现时不报
-        assert!(scan_locker_access("nothing relevant", &keys).is_empty());
+        assert!(scan_locker_access("nothing relevant", &keys, &[]).is_empty());
     }
 
     #[test]
     fn test_locker_access_empty_text_no_findings() {
-        assert!(scan_locker_access("", &["SOME_KEY".to_string()].iter().map(|s| s.to_string()).collect::<Vec<_>>()).is_empty());
+        assert!(scan_locker_access("", &["SOME_KEY".to_string()].iter().map(|s| s.to_string()).collect::<Vec<_>>(), &[]).is_empty());
+    }
+
+    #[test]
+    fn test_locker_access_protected_paths() {
+        let paths = vec![
+            "D:\\secrets\\api.key".to_string(),
+            "*.pem".to_string(),
+        ];
+        // 具体路径：相邻（反斜杠）/ 相邻（正斜杠）/ 相对路径尾段
+        let out = scan_locker_access("type D:\\secrets\\api.key", &[], &paths);
+        assert!(out.iter().any(|f| f.kind == "protected_path"), "{:?}", out);
+        let out = scan_locker_access("cat /d/secrets/api.key", &[], &paths);
+        assert!(out.iter().any(|f| f.kind == "protected_path"));
+        let out = scan_locker_access("cd secrets && cat ./api.key", &[], &paths);
+        assert!(out.iter().any(|f| f.kind == "protected_path"));
+        // 通配后缀：任一同扩展名文件引用
+        let out = scan_locker_access("openssl ... server.pem", &[], &paths);
+        assert!(out.iter().any(|f| f.kind == "protected_path"));
+        // 无关文本不报
+        assert!(scan_locker_access("read the config file", &[], &paths).is_empty());
+        // 同 kind 只报一次
+        let out = scan_locker_access("secrets\\api.key and server.pem", &[], &paths);
+        assert_eq!(
+            out.iter().filter(|f| f.kind == "protected_path").count(),
+            1,
+            "{:?}",
+            out
+        );
     }
 
     // ─────────── 报错泄密 ───────────
