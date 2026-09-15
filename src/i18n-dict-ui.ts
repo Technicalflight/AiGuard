@@ -424,7 +424,6 @@ export const UI_DICT: Record<string, string> = {
   "保险柜存你录入的敏感值（密钥、口令等）：出站请求凡命中即按条目动作脱敏或拦截，模型只见到占位符；模型下发命令点名键名或读取 .env、SSH 私钥、环境变量等保护对象时产生访问告警。": "The locker stores sensitive values you add (keys, passwords, etc.): any outbound request that matches an entry is masked or blocked per its action, and the model only ever sees a placeholder. Alerts fire when the model's commands name an entry or read protected objects (.env, SSH keys, environment variables).",
   "键名": "Name",
   "值": "Value",
-  "保存保险柜": "Save locker",
   "文件 / 文件夹条目产生访问告警（代理不执行命令，无法阻止本地读取，但「谁在碰」全程可见）；路径支持通配，如 *.pem 保护全部同名扩展文件。": "File / folder entries produce access alerts (the proxy does not execute commands and cannot stop local reads, but \"who is touching what\" stays fully visible). Paths support wildcards, e.g. *.pem protects every file with that extension.",
   "新增类型": "New entry type",
   "凭据值": "Credential value",
