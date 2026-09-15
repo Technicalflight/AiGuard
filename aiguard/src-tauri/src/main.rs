@@ -24,7 +24,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 use i18n::Language;
-use state::AppState;
+use state::{AppState, CloseBehavior};
 use store::Store;
 
 // ═══════════════════════ 系统托盘 ═══════════════════════
@@ -331,16 +331,48 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
     match id {
         "toggle" => toggle_guard_outside(app),
         "show" => show_main_window(app),
-        "quit" => {
-            // 退出前先还原系统级改动：否则系统代理会一直指向一个已退出的本地进程
-            let state = app.state::<Arc<AppState>>();
-            if let Err(e) = commands::apply_guard_enabled(state.inner(), false) {
-                log::warn!("退出前关闭守护失败: {}", e);
-            }
-            app.exit(0);
-        }
+        "quit" => quit_app(app),
         _ => {}
     }
+}
+
+/// 退出应用：**必须**先还原系统级改动（系统代理 / hosts / 证书信任不动），
+/// 否则系统代理会一直指向一个已退出的本地进程，所有浏览器请求全部失败。
+///
+/// 托盘「退出」、关闭行为为「直接退出」、询问窗里点「退出程序」三条路径
+/// 都汇入这里——退出清理只允许存在这一份。
+fn quit_app(app: &tauri::AppHandle) {
+    let state = app.state::<Arc<AppState>>();
+    if let Err(e) = commands::apply_guard_enabled(state.inner(), false) {
+        log::warn!("退出前关闭守护失败: {}", e);
+    }
+    app.exit(0);
+}
+
+/// 主窗关闭请求分流：按 `close.behavior` 配置执行「询问 / 直接退出 / 直接托盘」。
+///
+/// 自绘标题栏 ✕（`w.close()`）、Alt+F4、任务栏关闭全部汇入 `CloseRequested`，
+/// 这里是唯一需要分流的点。`Ask` 模式阻止默认关闭后 emit 给前端弹询问窗，
+/// 用户的选择经 `confirm_close` 命令回来——窗口销毁后前端就没了，所以
+/// 询问窗必须活在前端、由命令驱动后端动作。
+fn handle_close_requested(
+    app: &tauri::AppHandle,
+    window: &tauri::Window,
+    api: &tauri::CloseRequestApi,
+) {
+    let state = app.state::<Arc<AppState>>();
+    let behavior = state.inner().close_behavior();
+    match behavior {
+        CloseBehavior::Exit => quit_app(app),
+        CloseBehavior::Tray => {
+            let _ = window.hide();
+        }
+        CloseBehavior::Ask => {
+            state.inner().emit_event("close-requested", ());
+        }
+    }
+    // 一律阻止默认关闭：Exit 路径由 quit_app 显式退出，其余路径窗口继续存活。
+    api.prevent_close();
 }
 
 /// 启动自检：端口占用 / 私钥落盘保护 / 数据目录权限 / 调试器。
@@ -426,6 +458,16 @@ fn main() {
                 })
                 .build(),
         )
+        // 主窗关闭分流：自绘标题栏 ✕ / Alt+F4 / 任务栏关闭全部汇入同一条
+        // CloseRequested，按「每次询问 / 直接退出 / 直接托盘」配置执行。
+        .on_window_event(|window, event| {
+            // WindowEvent 是 #[non_exhaustive]：跨 crate 匹配必须带 ..
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    handle_close_requested(window.app_handle(), window, api);
+                }
+            }
+        })
         .setup(|app| {
             // 应用数据目录（存放 SQLite 与 CA 证书）
             let data_dir = app
@@ -731,6 +773,9 @@ fn main() {
             commands::get_update_state,
             commands::set_update_config,
             commands::check_update,
+            commands::get_close_behavior,
+            commands::set_close_behavior,
+            commands::confirm_close,
         ])
         .run(tauri::generate_context!())
         .expect("AI 安全卫士启动失败");

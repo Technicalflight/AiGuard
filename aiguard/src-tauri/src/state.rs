@@ -720,6 +720,63 @@ pub struct UpdateStatus {
     pub failed: bool,
 }
 
+// ═══════════════════════ 关闭行为 ═══════════════════════
+
+/// kv key：主窗关闭行为
+pub const KV_CLOSE_BEHAVIOR: &str = "close.behavior";
+
+/// 主窗关闭行为。
+///
+/// 点下关闭按钮（自绘标题栏 ✕ / Alt+F4 / 任务栏关闭都汇入同一条
+/// `CloseRequested` 路径）时应用该行为：
+/// - `Ask`（默认）：弹前端询问窗「退出程序 / 最小化到托盘」，勾「记住选择」后写回本配置；
+/// - `Exit` / `Tray`：不再询问，直接按所选行为执行。
+///
+/// 序列化成小写字符串存 kv，前端用同一组字面量。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CloseBehavior {
+    /// 每次关闭时询问
+    #[default]
+    Ask,
+    /// 直接退出程序（走托盘「退出」同一条清理路径）
+    Exit,
+    /// 直接最小化到托盘
+    Tray,
+}
+
+impl CloseBehavior {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CloseBehavior::Ask => "ask",
+            CloseBehavior::Exit => "exit",
+            CloseBehavior::Tray => "tray",
+        }
+    }
+
+    /// 从 kv / 前端传来的字面量解析；非法值一律回退 Ask（宁可多问一次，
+    /// 也不要让一份手改的 kv 让「点关闭毫无反应」）。
+    pub fn parse(raw: &str) -> CloseBehavior {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "exit" => CloseBehavior::Exit,
+            "tray" => CloseBehavior::Tray,
+            _ => CloseBehavior::Ask,
+        }
+    }
+}
+
+impl Serialize for CloseBehavior {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for CloseBehavior {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Ok(CloseBehavior::parse(&raw))
+    }
+}
+
 /// 当前应用版本（编译期确定）。
 pub fn current_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
@@ -811,6 +868,8 @@ pub struct AppState {
     pub update: RwLock<UpdateConfig>,
     /// 最近一次更新检查结果
     pub update_status: RwLock<UpdateStatus>,
+    /// 主窗关闭行为（每次询问 / 直接退出 / 直接最小化到托盘）
+    pub close_behavior: RwLock<CloseBehavior>,
     /// 受守护连接的标记：client addr -> 最近一次 AI 域名请求时间
     pub guarded_addrs: RwLock<HashMap<String, Instant>>,
     /// SQLite 日志存储
@@ -957,6 +1016,14 @@ impl AppState {
             .flatten()
             .and_then(|json| serde_json::from_str::<UpdateStatus>(&json).ok())
             .unwrap_or_default();
+        // 关闭行为：非法值回退 Ask（parse 内置兜底，宁可多问一次也不静默失效）
+        let close_behavior = CloseBehavior::parse(
+            &store
+                .kv_get(KV_CLOSE_BEHAVIOR)
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
+        );
         // 审计事件后台写线程（独立连接，不阻塞流量路径）
         let audit_writer = AuditWriter::spawn(db_path).unwrap_or_else(|e| {
             log::error!("审计写线程启动失败（审计事件将无法落库）: {}", e);
@@ -1027,6 +1094,7 @@ impl AppState {
             shortcut: RwLock::new(shortcut),
             update: RwLock::new(update),
             update_status: RwLock::new(update_status),
+            close_behavior: RwLock::new(close_behavior),
             guarded_addrs: RwLock::new(HashMap::new()),
             store,
             config: RwLock::new(Config::default()),
@@ -1357,6 +1425,24 @@ impl AppState {
             Err(poisoned) => *poisoned.into_inner() = st.clone(),
         }
         Ok(st)
+    }
+
+    /// 当前主窗关闭行为快照。
+    pub fn close_behavior(&self) -> CloseBehavior {
+        match self.close_behavior.read() {
+            Ok(g) => *g,
+            Err(poisoned) => *poisoned.into_inner(),
+        }
+    }
+
+    /// 保存主窗关闭行为（落盘 + 热更新）。CloseRequested 分流与设置页共用同一份。
+    pub fn apply_close_behavior(&self, b: CloseBehavior) -> Result<CloseBehavior, String> {
+        self.store.kv_set(KV_CLOSE_BEHAVIOR, b.as_str())?;
+        match self.close_behavior.write() {
+            Ok(mut g) => *g = b,
+            Err(poisoned) => *poisoned.into_inner() = b,
+        }
+        Ok(b)
     }
 
     /// 最近安全事件快照（最新在前）。
