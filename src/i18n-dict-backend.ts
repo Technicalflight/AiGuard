@@ -86,6 +86,8 @@ export const BACKEND_DICT: Record<string, string> = {
   "复读篡改": "Replay tampering",
   "该条目已存在": "This entry already exists",
   "高危指令": "High-risk commands",
+  "工具注入": "Tool-call injection",
+  "MCP / 工具调用结果回传的内容里藏有破坏性命令或伪造系统标记，企图借模型之手执行（间接注入）": "Destructive commands or forged system markers smuggled in MCP / tool-call result payloads, attempting to get them executed through the model (indirect injection)",
   "格式化磁盘": "Format disk",
   "格式化块设备": "Format block device",
   "根证书仍在系统信任库中，请手动删除后再关闭守护": "The root certificate is still in a system trust store; remove it manually before turning the guard off",

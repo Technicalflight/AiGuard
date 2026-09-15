@@ -272,7 +272,7 @@ impl AiGuardHandler {
                         .map(|s| s.to_string()),
                     body_text: truncate_chars(&body_text, state::REQ_ECHO_SAMPLE_MAX),
                     hash: req_hash.clone(),
-                    probe_id,
+                    probe_id: probe_id.clone(),
                     markers,
                 };
                 self.state.remember_req_info(&addr_key, req_info);
@@ -302,6 +302,23 @@ impl AiGuardHandler {
                 // 若期间被后台清理，响应到达时查不到映射，占位符会静默漏给用户
                 if hit_count > 0 {
                     self.state.vault.pin(&session);
+                }
+
+                // 工具注入：MCP / Function Calling 工具结果回传内容藏指令。
+                // 在脱敏之后扫描（占位符已就位，evidence 才可安全落库）；
+                // 信号开关与入库门槛由 record_findings 统一过滤。
+                let inj_findings = aiguard_core::audit::scan_tool_call_injection(&json);
+                if !inj_findings.is_empty() {
+                    let meta = FindingMeta {
+                        sid: session.clone(),
+                        host: host.clone(),
+                        method: String::new(),
+                        path: String::new(),
+                        request_hash: req_hash.clone(),
+                        response_hash: String::new(),
+                        probe_id: probe_id.clone(),
+                    };
+                    self.state.record_findings(inj_findings, &meta);
                 }
 
                 if blocked {

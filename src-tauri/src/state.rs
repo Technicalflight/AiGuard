@@ -969,12 +969,17 @@ impl AppState {
             .flatten()
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default();
-        let audit = store
+        let mut audit = store
             .kv_get(KV_AUDIT_CONFIG)
             .ok()
             .flatten()
             .and_then(|json| serde_json::from_str::<AuditConfig>(&json).ok())
             .unwrap_or_default();
+        // 版本演进：存量配置里没有的新信号键，按目录默认值补齐
+        // （不覆盖用户已显式设置过的开关）
+        for (code, _, _, implemented) in SIGNAL_CATALOG {
+            audit.signals.entry(code.to_string()).or_insert(implemented);
+        }
         let restore_limits = store
             .kv_get(KV_RESTORE_LIMITS)
             .ok()
@@ -1956,10 +1961,11 @@ mod tests {
     #[test]
     fn test_signal_catalog_shape() {
         assert_eq!(signal_name("dangerous_action"), "高危指令");
+        assert_eq!(signal_name("tool_call_injection"), "工具注入");
         assert_eq!(signal_name("error_leak"), "报错泄密");
         assert_eq!(signal_name("cross_request_pollution"), "记忆残留");
         assert_eq!(severity_str(Severity::Critical), "CRITICAL");
-        assert_eq!(SIGNAL_CATALOG.len(), 7);
+        assert_eq!(SIGNAL_CATALOG.len(), 8);
     }
 
     #[test]
