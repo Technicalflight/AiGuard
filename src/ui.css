@@ -889,6 +889,11 @@ table.data tr:last-child td {
   animation: modal-in 0.18s ease;
 }
 
+/* 宽体弹窗（名单管理等含表格 / 表单行的内容） */
+.modal-wide {
+  width: 680px;
+}
+
 @keyframes modal-in {
   from {
     opacity: 0;
@@ -944,6 +949,37 @@ table.data tr:last-child td {
   justify-content: flex-end;
   gap: 10px;
   padding: 16px 22px 20px;
+}
+
+/* ─────────── 执行顺序可视化：可点击名单节点 ─────────── */
+
+.flow-node-btn {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.flow-node-btn:hover {
+  border-color: var(--brand, #0e8a5f);
+  background: rgba(14, 138, 95, 0.05);
+}
+
+.flow-node-chip {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--brand, #0e8a5f);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 1px 8px;
+  flex-shrink: 0;
 }
 
 /* ─────────── 自定义日期选择（替代 input[type=date]） ─────────── */
