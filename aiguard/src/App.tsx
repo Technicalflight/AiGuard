@@ -2688,6 +2688,7 @@ const SEC_TONE: Record<string, "red" | "amber" | "green"> = {
   error_leak: "red",
   identity_swap: "red",
   cross_request_pollution: "red",
+  tool_call_injection: "red",
   tool_call_rewrite: "amber",
   sse_anomaly: "amber",
   response_poison: "amber",

@@ -136,6 +136,7 @@ const SIGNAL_EN: &[(&str, &str)] = &[
     ("response_poison", "Response smuggling"),
     ("cross_request_pollution", "Memory residue"),
     ("dangerous_action", "High-risk commands"),
+    ("tool_call_injection", "Tool-call injection"),
 ];
 
 // ═══════════════════════ 取词与格式化 ═══════════════════════
