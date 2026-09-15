@@ -690,6 +690,8 @@ body {
 table.data {
   width: 100%;
   border-collapse: collapse;
+  /* fixed 布局：列宽由表头定义决定，超长 URL / evidence 不再把表格撑出窗口 */
+  table-layout: fixed;
 }
 
 table.data th {
@@ -700,6 +702,8 @@ table.data th {
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 table.data td {
@@ -707,7 +711,17 @@ table.data td {
   border-bottom: 1px solid #eef1f0;
   font-size: 13px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--ink);
+}
+
+/* 长文本换行例外（核查报告等以阅读为主的表格）：允许任意字符处折行 */
+table.data.wrap-cells td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 table.data tr:last-child td {
