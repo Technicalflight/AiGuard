@@ -323,11 +323,14 @@ function Modal({
   onClose,
   children,
   footer,
+  wide,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  /** 宽体弹窗（名单管理等含表格 / 表单行的内容） */
+  wide?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -344,7 +347,7 @@ function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal">
+      <div className={wide ? "modal modal-wide" : "modal"}>
         <div className="modal-head">
           <span className="modal-title">{title}</span>
           <button type="button" className="modal-x" onClick={onClose} title={t("关闭")}>
@@ -1614,22 +1617,44 @@ function errMsg(e: unknown): string {
  * 规则执行顺序可视化：黑名单 → 白名单 → 检测规则 三层流水线。
  * 把原本只在文档里的优先级规则画进 UI：每层显示当前条数与一句话语义，
  * 箭头表达「上一层定结果，下一层才轮到」的短路关系。
+ * 黑 / 白名单节点可点击 → 弹出对应名单的管理弹窗（页面不再重复铺两块名单区）。
  */
-function PriorityFlow({ bl, wl, rules, enabled }: { bl: number; wl: number; rules: number; enabled: number }) {
-  const nodes: { dot: string; name: string; count: string; desc: string }[] = [
+function PriorityFlow({
+  bl,
+  wl,
+  rules,
+  enabled,
+  onOpen,
+}: {
+  bl: number;
+  wl: number;
+  rules: number;
+  enabled: number;
+  onOpen: (list: "black" | "white") => void;
+}) {
+  const nodes: {
+    key: "black" | "white" | "rules";
+    dot: string;
+    name: string;
+    count: string;
+    desc: string;
+  }[] = [
     {
+      key: "black",
       dot: "#B23B3B",
       name: t("黑名单"),
       count: t("条数：") + bl,
       desc: t("命中即强制执行所选动作（拦截请求 / 强制脱敏），优先于一切"),
     },
     {
+      key: "white",
       dot: "#0E8A5F",
       name: t("白名单"),
       count: t("条数：") + wl,
       desc: t("命中则不拦截；关闭「仍执行脱敏」的条目完全直通"),
     },
     {
+      key: "rules",
       dot: "#35618F",
       name: t("检测规则"),
       count: t("启用中：") + `${enabled} / ${rules}`,
@@ -1639,45 +1664,64 @@ function PriorityFlow({ bl, wl, rules, enabled }: { bl: number; wl: number; rule
   return (
     <div className="card card-pad">
       <div style={{ display: "flex", alignItems: "stretch", gap: 0, flexWrap: "wrap" }}>
-        {nodes.map((n, i) => (
-          <div key={`node-${i}`} style={{ display: "flex", alignItems: "stretch", flex: "1 1 220px", minWidth: 0 }}>
-            {i > 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "0 10px",
-                  color: "var(--muted, #8a938f)",
-                  flexShrink: 0,
-                }}
-                aria-hidden
-              >
-                <svg width="18" height="12" viewBox="0 0 18 12">
-                  <path d="M1 6h13M10 1.5L15 6l-5 4.5" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
-            )}
-            <div
-              style={{
-                flex: 1,
-                minWidth: 0,
-                border: "1px solid var(--line)",
-                borderRadius: 8,
-                padding: "10px 12px",
-              }}
-            >
+        {nodes.map((n, i) => {
+          const clickable = n.key !== "rules";
+          const inner = (
+            <>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span className={`sec-dot ${i === 0 ? "red" : i === 1 ? "green" : "amber"}`} aria-hidden />
                 <span style={{ fontWeight: 600 }}>{tb(n.name)}</span>
                 <span className="muted" style={{ fontSize: 12 }}>{n.count}</span>
+                {clickable && <span className="flow-node-chip">{t("管理")}</span>}
               </div>
               <div className="muted" style={{ marginTop: 6, fontSize: 12, lineHeight: 1.6 }}>{tb(n.desc)}</div>
+            </>
+          );
+          return (
+            <div key={n.key} style={{ display: "flex", alignItems: "stretch", flex: "1 1 220px", minWidth: 0 }}>
+              {i > 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "0 10px",
+                    color: "var(--muted, #8a938f)",
+                    flexShrink: 0,
+                  }}
+                  aria-hidden
+                >
+                  <svg width="18" height="12" viewBox="0 0 18 12">
+                    <path d="M1 6h13M10 1.5L15 6l-5 4.5" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              )}
+              {clickable ? (
+                <button
+                  type="button"
+                  className="flow-node-btn"
+                  onClick={() => onOpen(n.key as "black" | "white")}
+                >
+                  {inner}
+                </button>
+              ) : (
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    border: "1px solid var(--line)",
+                    borderRadius: 8,
+                    padding: "10px 12px",
+                  }}
+                >
+                  {inner}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
-        {t("请求进入守护域名时按此顺序评估：黑名单命中即定结果并短路，白名单命中决定是否拦截，最后由检测规则按正则逐条处理正文。")}
+        {t("请求进入守护域名时按此顺序评估：黑名单命中即定结果并短路，白名单命中决定是否拦截，最后由检测规则按正则逐条处理正文。点击名单节点管理对应名单。")}
       </div>
     </div>
   );
@@ -2131,6 +2175,8 @@ function RulesPage() {
     action: "block",
   });
   const [blErr, setBlErr] = useState("");
+  // 名单管理弹窗：从「执行顺序」卡片的节点打开（页面不再重复铺两块名单区）
+  const [listModal, setListModal] = useState<null | "black" | "white">(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -2292,6 +2338,7 @@ function RulesPage() {
         wl={wl.length}
         rules={rules.length}
         enabled={rules.filter((r) => r.enabled).length}
+        onOpen={(list) => setListModal(list)}
       />
 
       {/* ── 内置规则预设 ── */}
@@ -2394,190 +2441,197 @@ function RulesPage() {
         {newErr && <div className="form-err">{newErr}</div>}
       </div>
 
-      {/* ── 黑名单 ── */}
-      <div className="section-title">
-        <span className="list-dot danger" />
-        {t("黑名单（强制执行所选动作 · 优先级最高）")}
-      </div>
-      <div className="card">
-        {bl.length === 0 ? (
-          <div className="empty">{t("黑名单为空 —— 所有守护域名流量按检测规则处理")}</div>
-        ) : (
-          <table className="data">
-            <thead>
-              <tr>
-                <th>{t("类型")}</th>
-                <th>{t("内容")}</th>
-                <th>{t("命中动作")}</th>
-                <th style={{ textAlign: "right" }}>{t("操作")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bl.map((b) => (
-                <tr key={b.id}>
-                  <td>
-                    <Badge text={b.kind === "domain" ? t("域名") : t("进程")} tone="gray" />
-                  </td>
-                  <td
-                    className="mono"
-                    style={{ maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis" }}
-                    title={b.pattern}
-                  >
-                    {b.pattern}
-                  </td>
-                  <td>
-                    <ActionBadge action={b.action} />
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    <button className="btn mini danger" onClick={() => removeBl(b.id)}>
-                      {t("删除")}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <div style={{ padding: "14px 18px", borderTop: "1px solid var(--line)" }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <Dropdown
-              value={blForm.kind}
-              options={[
-                { value: "domain", label: t("域名") },
-                { value: "process", label: t("进程（exe / 文件夹）") },
-              ]}
-              onChange={(v) => setBlForm({ ...blForm, kind: v as "domain" | "process" })}
-            />
-            <Dropdown
-              value={blForm.action}
-              options={[
-                { value: "block", label: t("命中即拦截") },
-                { value: "mask", label: t("强制脱敏") },
-              ]}
-              onChange={(v) => setBlForm({ ...blForm, action: v })}
-            />
-            <input
-              className="input"
-              style={{ flex: 1, minWidth: 200, width: "auto" }}
-              value={blForm.pattern}
-              placeholder={
-                blForm.kind === "domain"
-                  ? t("如 untrusted-ai.example.com（子域名一并生效）")
-                  : t("浏览选择 exe / 文件夹，或直接粘贴完整路径")
-              }
-              onChange={(e) => setBlForm({ ...blForm, pattern: e.target.value })}
-            />
-            {blForm.kind === "process" && (
-              <>
-                <button className="btn" onClick={() => void browse("bl", "exe")}>
-                  {t("浏览文件…")}
-                </button>
-                <button className="btn" onClick={() => void browse("bl", "folder")}>
-                  {t("浏览文件夹…")}
-                </button>
-              </>
-            )}
-            <button className="btn primary" onClick={addBl}>
-              {t("添加")}
-            </button>
-          </div>
-          {blErr && <div className="form-err">{blErr}</div>}
-        </div>
-      </div>
-
-      {/* ── 白名单 ── */}
-      <div className="section-title">
-        <span className="list-dot brand" />
-        {t("白名单（不拦截 · 脱敏可选）")}
-      </div>
-      <div className="card">
-        {wl.length === 0 ? (
-          <div className="empty">{t("白名单为空 —— 所有守护域名流量均按规则脱敏 / 拦截")}</div>
-        ) : (
-          <table className="data">
-            <thead>
-              <tr>
-                <th>{t("类型")}</th>
-                <th>{t("内容")}</th>
-                <th>{t("仍执行脱敏")}</th>
-                <th style={{ textAlign: "right" }}>{t("操作")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {wl.map((w) => (
-                <tr key={w.id}>
-                  <td>
-                    <Badge text={w.kind === "domain" ? t("域名") : t("进程")} tone="gray" />
-                  </td>
-                  <td
-                    className="mono"
-                    style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" }}
-                    title={w.pattern}
-                  >
-                    {w.pattern}
-                  </td>
-                  <td>
-                    <Toggle on={w.scrub} onChange={() => toggleWlScrub(w)} />
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    <button className="btn mini danger" onClick={() => removeWl(w.id)}>
-                      {t("删除")}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <div style={{ padding: "14px 18px", borderTop: "1px solid var(--line)" }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <Dropdown
-              value={wlForm.kind}
-              options={[
-                { value: "domain", label: t("域名") },
-                { value: "process", label: t("进程（exe / 文件夹）") },
-              ]}
-              onChange={(v) => setWlForm({ ...wlForm, kind: v as "domain" | "process" })}
-            />
-            <input
-              className="input"
-              style={{ flex: 1, minWidth: 220, width: "auto" }}
-              value={wlForm.pattern}
-              placeholder={
-                wlForm.kind === "domain"
-                  ? t("如 api.openai.com（子域名一并生效）")
-                  : t("浏览选择 exe / 文件夹，或直接粘贴完整路径")
-              }
-              onChange={(e) => setWlForm({ ...wlForm, pattern: e.target.value })}
-            />
-            {wlForm.kind === "process" && (
-              <>
-                <button className="btn" onClick={() => void browse("wl", "exe")}>
-                  {t("浏览文件…")}
-                </button>
-                <button className="btn" onClick={() => void browse("wl", "folder")}>
-                  {t("浏览文件夹…")}
-                </button>
-              </>
-            )}
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-              <Toggle on={wlForm.scrub} onChange={() => setWlForm({ ...wlForm, scrub: !wlForm.scrub })} />
-              <span className="muted">{t("仍执行脱敏")}</span>
-            </label>
-            <button className="btn primary" onClick={addWl}>
-              {t("添加")}
-            </button>
-          </div>
-          {wlErr && <div className="form-err">{wlErr}</div>}
-        </div>
-      </div>
-      <div className="muted" style={{ marginTop: 10, paddingBottom: 16 }}>
-        {t("提示：名单优先级为 黑名单（命中后强制执行所选动作：拦截或脱敏）＞ 白名单（不拦截，脱敏可选）＞ 检测规则。进程名单通过本机")}{" "}{t("TCP 连接表将来源端口反解为进程路径后匹配；无法识别进程的连接按不在名单处理。")}
-      </div>
-
       {/* ── 导入 / 导出规则包 ── */}
       <div className="section-title">{t("导入 / 导出")}</div>
       <RulesTransferCard onChanged={() => void refresh()} />
+
+      {/* ── 黑名单管理弹窗（执行顺序卡片节点打开） ── */}
+      {listModal === "black" && (
+        <Modal
+          wide
+          title={t("黑名单（强制执行所选动作 · 优先级最高）")}
+          onClose={() => setListModal(null)}
+        >
+          {bl.length === 0 ? (
+            <div className="empty">{t("黑名单为空 —— 所有守护域名流量按检测规则处理")}</div>
+          ) : (
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>{t("类型")}</th>
+                  <th>{t("内容")}</th>
+                  <th>{t("命中动作")}</th>
+                  <th style={{ textAlign: "right" }}>{t("操作")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bl.map((b) => (
+                  <tr key={b.id}>
+                    <td>
+                      <Badge text={b.kind === "domain" ? t("域名") : t("进程")} tone="gray" />
+                    </td>
+                    <td
+                      className="mono"
+                      style={{ maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis" }}
+                      title={b.pattern}
+                    >
+                      {b.pattern}
+                    </td>
+                    <td>
+                      <ActionBadge action={b.action} />
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <button className="btn mini danger" onClick={() => removeBl(b.id)}>
+                        {t("删除")}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div style={{ padding: "12px 0", borderTop: "1px solid var(--line)" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <Dropdown
+                value={blForm.kind}
+                options={[
+                  { value: "domain", label: t("域名") },
+                  { value: "process", label: t("进程（exe / 文件夹）") },
+                ]}
+                onChange={(v) => setBlForm({ ...blForm, kind: v as "domain" | "process" })}
+              />
+              <Dropdown
+                value={blForm.action}
+                options={[
+                  { value: "block", label: t("命中即拦截") },
+                  { value: "mask", label: t("强制脱敏") },
+                ]}
+                onChange={(v) => setBlForm({ ...blForm, action: v })}
+              />
+              <input
+                className="input"
+                style={{ flex: 1, minWidth: 200, width: "auto" }}
+                value={blForm.pattern}
+                placeholder={
+                  blForm.kind === "domain"
+                    ? t("如 untrusted-ai.example.com（子域名一并生效）")
+                    : t("浏览选择 exe / 文件夹，或直接粘贴完整路径")
+                }
+                onChange={(e) => setBlForm({ ...blForm, pattern: e.target.value })}
+              />
+              {blForm.kind === "process" && (
+                <>
+                  <button className="btn" onClick={() => void browse("bl", "exe")}>
+                    {t("浏览文件…")}
+                  </button>
+                  <button className="btn" onClick={() => void browse("bl", "folder")}>
+                    {t("浏览文件夹…")}
+                  </button>
+                </>
+              )}
+              <button className="btn primary" onClick={addBl}>
+                {t("添加")}
+              </button>
+            </div>
+            {blErr && <div className="form-err">{blErr}</div>}
+          </div>
+          <div className="muted" style={{ fontSize: 12, lineHeight: 1.6, paddingBottom: 10 }}>
+            {t("TCP 连接表将来源端口反解为进程路径后匹配；无法识别进程的连接按不在名单处理。")}
+          </div>
+        </Modal>
+      )}
+
+      {/* ── 白名单管理弹窗（执行顺序卡片节点打开） ── */}
+      {listModal === "white" && (
+        <Modal
+          wide
+          title={t("白名单（不拦截 · 脱敏可选）")}
+          onClose={() => setListModal(null)}
+        >
+          {wl.length === 0 ? (
+            <div className="empty">{t("白名单为空 —— 所有守护域名流量均按规则脱敏 / 拦截")}</div>
+          ) : (
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>{t("类型")}</th>
+                  <th>{t("内容")}</th>
+                  <th>{t("仍执行脱敏")}</th>
+                  <th style={{ textAlign: "right" }}>{t("操作")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {wl.map((w) => (
+                  <tr key={w.id}>
+                    <td>
+                      <Badge text={w.kind === "domain" ? t("域名") : t("进程")} tone="gray" />
+                    </td>
+                    <td
+                      className="mono"
+                      style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" }}
+                      title={w.pattern}
+                    >
+                      {w.pattern}
+                    </td>
+                    <td>
+                      <Toggle on={w.scrub} onChange={() => toggleWlScrub(w)} />
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <button className="btn mini danger" onClick={() => removeWl(w.id)}>
+                        {t("删除")}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div style={{ padding: "12px 0", borderTop: "1px solid var(--line)" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <Dropdown
+                value={wlForm.kind}
+                options={[
+                  { value: "domain", label: t("域名") },
+                  { value: "process", label: t("进程（exe / 文件夹）") },
+                ]}
+                onChange={(v) => setWlForm({ ...wlForm, kind: v as "domain" | "process" })}
+              />
+              <input
+                className="input"
+                style={{ flex: 1, minWidth: 220, width: "auto" }}
+                value={wlForm.pattern}
+                placeholder={
+                  wlForm.kind === "domain"
+                    ? t("如 api.openai.com（子域名一并生效）")
+                    : t("浏览选择 exe / 文件夹，或直接粘贴完整路径")
+                }
+                onChange={(e) => setWlForm({ ...wlForm, pattern: e.target.value })}
+              />
+              {wlForm.kind === "process" && (
+                <>
+                  <button className="btn" onClick={() => void browse("wl", "exe")}>
+                    {t("浏览文件…")}
+                  </button>
+                  <button className="btn" onClick={() => void browse("wl", "folder")}>
+                    {t("浏览文件夹…")}
+                  </button>
+                </>
+              )}
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                <Toggle on={wlForm.scrub} onChange={() => setWlForm({ ...wlForm, scrub: !wlForm.scrub })} />
+                <span className="muted">{t("仍执行脱敏")}</span>
+              </label>
+              <button className="btn primary" onClick={addWl}>
+                {t("添加")}
+              </button>
+            </div>
+            {wlErr && <div className="form-err">{wlErr}</div>}
+          </div>
+          <div className="muted" style={{ fontSize: 12, lineHeight: 1.6, paddingBottom: 10 }}>
+            {t("TCP 连接表将来源端口反解为进程路径后匹配；无法识别进程的连接按不在名单处理。")}
+          </div>
+        </Modal>
+      )}
 
       {/* 编辑规则弹窗 */}
       {editTarget && (
