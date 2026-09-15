@@ -4904,6 +4904,7 @@ function CustomHostsCard() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [err, setErr] = useState("");
+  const [mode, setMode] = useState("system_proxy");
 
   useEffect(() => {
     getCustomHosts()
@@ -4912,6 +4913,9 @@ function CustomHostsCard() {
         setText(list.join("\n"));
       })
       .catch((e) => setErr(errMsg(e)));
+    getDashboard()
+      .then((s) => setMode(s.mode))
+      .catch(() => {});
   }, []);
 
   const save = async () => {
@@ -4935,6 +4939,21 @@ function CustomHostsCard() {
       <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7, marginBottom: 14 }}>
         {t("你的模型走中转 / 自建网关时，把它的域名加进这里（每行一个，如 ai.example.com），代理才会接管并做脱敏——不接管的话，黑名单、检测规则、保险柜对它一概无效。")}
       </div>
+      {mode === "system_proxy" && (
+        <div
+          style={{
+            background: "#FAEEDA",
+            border: "1px solid #EF9F27",
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginBottom: 12,
+            fontSize: 12.5,
+            lineHeight: 1.7,
+          }}
+        >
+          {t("实测提醒：系统代理（PAC）只对遵守系统代理设置的应用生效，桌面 AI 客户端大多直连——它们发往已接管域名的流量不会经过守护（代理日志里也看不到）。两个办法：① 到「拦截模式」切换为 hosts 模式（DNS 层劫持，对全部应用强制生效，需管理员授权一次）；② 在 AI 客户端的网络设置里把 HTTP 代理指向 127.0.0.1:8888。")}
+        </div>
+      )}
       <span className="field-label">{t("自定义接管域名（每行一个，保存后对已开启的守护立即生效）")}</span>
       <textarea
         className="input mono"

@@ -431,6 +431,7 @@ export const UI_DICT: Record<string, string> = {
   "自定义接管域名（每行一个，保存后对已开启的守护立即生效）": "Custom guarded domains (one per line; saved changes apply to an active guard immediately)",
   "每行一个域名，如 ai.example.com": "One domain per line, e.g. ai.example.com",
   "保存域名清单": "Save domains",
+  "实测提醒：系统代理（PAC）只对遵守系统代理设置的应用生效，桌面 AI 客户端大多直连——它们发往已接管域名的流量不会经过守护（代理日志里也看不到）。两个办法：① 到「拦截模式」切换为 hosts 模式（DNS 层劫持，对全部应用强制生效，需管理员授权一次）；② 在 AI 客户端的网络设置里把 HTTP 代理指向 127.0.0.1:8888。": "Heads-up: the system proxy (PAC) only affects apps that honor system proxy settings — most desktop AI clients connect directly, so their traffic to guarded domains never reaches the guard (you won't see it in the proxy logs either). Two options: 1) switch to hosts mode under \"Interception mode\" (DNS-level hijack, enforced for ALL apps, requires admin approval once); 2) in your AI client's network settings, point the HTTP proxy at 127.0.0.1:8888.",
   "凭据值": "Credential value",
   "文件": "File",
   "文件夹": "Folder",
