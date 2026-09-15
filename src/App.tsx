@@ -91,6 +91,8 @@ import {
   setSemanticConfig,
   getLockerConfig,
   setLockerConfig,
+  getCustomHosts,
+  setCustomHosts,
   type RegexHit,
   type ImportPreview,
   type SemanticConfig,
@@ -4392,6 +4394,9 @@ function SettingsPage({
         </div>
       </div>
 
+      <div className="section-title">{t("接管范围")}</div>
+      <CustomHostsCard />
+
       <div className="section-title">{t("关闭窗口")}</div>
       <CloseBehaviorCard />
 
@@ -4889,6 +4894,70 @@ function UpdateCard() {
  * 关闭行为三选项：每次询问 / 直接退出 / 直接最小化到托盘。
  * 切换先本地生效再落盘，落盘失败回退（同语言切换的处理）。
  */
+// ─────────── 自定义接管域名卡片（中转 / 自建网关） ───────────
+
+/** 用户自定义接管域名：代理只接管清单内的域名做脱敏——中转 API 域名不加进来，
+ * 黑名单、检测规则、保险柜对它一概无效（流量根本不进守护链路）。 */
+function CustomHostsCard() {
+  const [hosts, setHosts] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    getCustomHosts()
+      .then((list) => {
+        setHosts(list);
+        setText(list.join("\n"));
+      })
+      .catch((e) => setErr(errMsg(e)));
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    setErr("");
+    setNotice("");
+    try {
+      const saved = await setCustomHosts(text.split("\n"));
+      setHosts(saved);
+      setText(saved.join("\n"));
+      setNotice(t("已保存并即时生效"));
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card card-pad">
+      <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7, marginBottom: 14 }}>
+        {t("你的模型走中转 / 自建网关时，把它的域名加进这里（每行一个，如 ai.example.com），代理才会接管并做脱敏——不接管的话，黑名单、检测规则、保险柜对它一概无效。")}
+      </div>
+      <span className="field-label">{t("自定义接管域名（每行一个，保存后对已开启的守护立即生效）")}</span>
+      <textarea
+        className="input mono"
+        rows={4}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={t("每行一个域名，如 ai.example.com")}
+        style={{ width: "100%", marginTop: 6, resize: "vertical" }}
+      />
+      <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+        <button className="btn primary" disabled={busy} onClick={() => void save()}>
+          {t("保存域名清单")}
+        </button>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {hosts.length} {t("条")}
+        </span>
+      </div>
+      {notice && <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>{notice}</div>}
+      {err && <div className="form-err">{err}</div>}
+    </div>
+  );
+}
+
 function CloseBehaviorCard() {
   const [behavior, setBehavior] = useState<CloseBehavior>("ask");
   const [busy, setBusy] = useState(false);

@@ -20,12 +20,16 @@ use std::path::Path;
 ///
 /// 匹配规则与 is_ai_host 一致：精确清单 + **注册域后缀**（dnsDomainIs）——
 /// 后者覆盖动态分配的子域（如 DeepSeek 文件上传的 `hf-xxxx.deepseek.com`）。
-pub fn pac_content(port: u16) -> String {
+/// `custom_hosts` 为用户自定义接管域名（中转 API 等），按精确域名追加。
+pub fn pac_content(port: u16, custom_hosts: &[String]) -> String {
     let proxy = format!("\"PROXY 127.0.0.1:{}\"", port);
-    let exact: Vec<String> = crate::state::AI_HOSTS
+    let mut exact: Vec<String> = crate::state::AI_HOSTS
         .iter()
         .map(|h| format!("host === \"{}\"", h))
         .collect();
+    for h in custom_hosts {
+        exact.push(format!("host === \"{}\"", h));
+    }
     let suffixes: Vec<String> = crate::state::AI_HOST_SUFFIXES
         .iter()
         .map(|s| {
@@ -60,7 +64,7 @@ pub fn write_pac(path: &Path, port: u16) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let mut f = fs::File::create(path).map_err(|e| e.to_string())?;
-    f.write_all(pac_content(port).as_bytes())
+    f.write_all(pac_content(port, &[]).as_bytes())
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -72,14 +76,14 @@ pub fn pac_http_url() -> String {
 }
 
 /// 按守护开关状态动态生成 PAC 内容：
-/// 守护关闭 → 全部直连；开启 → 仅 AI 域名走本地代理。
-/// （PAC 服务每请求实时生成，开关守护即时生效，无需改系统设置。）
-pub fn dynamic_pac_content(guard_enabled: bool, proxy_port: u16) -> String {
+/// 守护关闭 → 全部直连；开启 → 仅 AI 域名走本地代理（含用户自定义接管域名）。
+/// （PAC 服务每请求实时生成，开关守护 / 改域名清单即时生效，无需改系统设置。）
+pub fn dynamic_pac_content(guard_enabled: bool, proxy_port: u16, custom_hosts: &[String]) -> String {
     if !guard_enabled {
         return "function FindProxyForURL(url, host) {\r\n    return \"DIRECT\";\r\n}"
             .to_string();
     }
-    pac_content(proxy_port)
+    pac_content(proxy_port, custom_hosts)
 }
 
 // ═══════════════════════ 系统代理：开启 ═══════════════════════
@@ -362,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_pac_content_contains_hosts_and_direct() {
-        let pac = pac_content(8888);
+        let pac = pac_content(8888, &[]);
         assert!(pac.contains("api.openai.com"));
         assert!(pac.contains("PROXY 127.0.0.1:8888"));
         assert!(pac.contains("DIRECT"));
@@ -386,10 +390,10 @@ mod tests {
     /// 守护关闭时 PAC 必须整体直连（否则关掉守护后浏览器仍在走已停的代理端口）。
     #[test]
     fn test_dynamic_pac_content_short_circuits_when_disabled() {
-        let off = dynamic_pac_content(false, 8888);
+        let off = dynamic_pac_content(false, 8888, &[]);
         assert!(off.contains("DIRECT"));
         assert!(!off.contains("PROXY 127.0.0.1:8888"));
-        let on = dynamic_pac_content(true, 8888);
+        let on = dynamic_pac_content(true, 8888, &[]);
         assert!(on.contains("PROXY 127.0.0.1:8888"));
     }
 

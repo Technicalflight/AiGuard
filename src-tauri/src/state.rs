@@ -199,6 +199,15 @@ mod host_tests {
         assert!(!is_ai_host("evil-deepseek.com"));
         assert!(!is_ai_host_exact("evil-deepseek.com"));
     }
+
+    #[test]
+    fn test_normalize_host() {
+        assert_eq!(normalize_host("Example.COM"), "example.com");
+        assert_eq!(normalize_host("https://api.example.com/v1/chat"), "api.example.com");
+        assert_eq!(normalize_host("api.example.com:8443"), "api.example.com");
+        assert_eq!(normalize_host("  AI.HYBGZS.com  "), "ai.hybgzs.com");
+        assert_eq!(normalize_host("example.com/path"), "example.com");
+    }
 }
 
 // ─────────── 白名单 ───────────
@@ -840,6 +849,8 @@ pub struct AppState {
     pub detector: RwLock<Arc<Detector>>,
     /// 保险柜配置（响应侧访问告警读键名用；请求侧引擎在 Detector.locker 内）
     pub locker: RwLock<aiguard_core::locker::LockerConfig>,
+    /// 用户自定义接管域名（中转 API 等）：精确匹配，按对话域名语义做内容脱敏
+    pub custom_hosts: RwLock<Vec<String>>,
     /// 原文 ↔ 占位符映射表（仅内存；Arc 共享给还原管道）
     pub vault: Arc<Vault>,
     /// 还原管道参数
@@ -908,10 +919,23 @@ pub struct AppState {
 pub const KV_WHITELIST: &str = "whitelist.entries";
 /// kv key：黑名单持久化
 pub const KV_BLACKLIST: &str = "blacklist.entries";
+/// kv key：用户自定义接管域名（中转 API 等，JSON 数组）
+pub const KV_CUSTOM_HOSTS: &str = "guard.custom_hosts";
 /// kv key：本地代理是否要求令牌（"1"/"0"）
 pub const KV_REQUIRE_TOKEN: &str = "guard.require_token";
 /// kv key：本地代理令牌（32 位 hex，首次启动生成）
 pub const KV_PROXY_TOKEN: &str = "guard.proxy_token";
+
+/// 域名归一：剥端口与 scheme、去首尾空白、小写。
+pub fn normalize_host(host: &str) -> String {
+    let mut h = host.trim();
+    if let Some(idx) = h.find("//") {
+        h = &h[idx + 2..];
+    }
+    let h = h.split('/').next().unwrap_or(h);
+    let h = h.split(':').next().unwrap_or(h);
+    h.trim().to_ascii_lowercase()
+}
 
 /// 本地代理访问控制。
 ///
@@ -1087,6 +1111,14 @@ impl AppState {
         AppState {
             detector: RwLock::new(Arc::new(Detector::with_default_rules())),
             locker: RwLock::new(aiguard_core::locker::LockerConfig::default()),
+            custom_hosts: RwLock::new(
+                store
+                    .kv_get(KV_CUSTOM_HOSTS)
+                    .ok()
+                    .flatten()
+                    .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+                    .unwrap_or_default(),
+            ),
             vault: Arc::new(Vault::new()),
             restore_limits: RwLock::new(restore_limits),
             audit: RwLock::new(audit),
@@ -1186,6 +1218,44 @@ impl AppState {
             .filter(|e| e.enabled && e.kind == "value")
             .map(|e| e.name.clone())
             .collect()
+    }
+
+    /// 用户自定义接管域名快照。
+    pub fn custom_hosts_snapshot(&self) -> Vec<String> {
+        match self.custom_hosts.read() {
+            Ok(g) => g.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// 是否为受守护域名：内置清单（精确 + 注册域后缀）**或**用户自定义清单（精确）。
+    /// 自定义域名按对话域名语义处理（内容脱敏）——加进来的中转 API 就是要脱敏的。
+    pub fn is_ai_host(&self, host: &str) -> bool {
+        is_ai_host(host) || self.is_custom_host(host)
+    }
+
+    /// 是否命中**精确接管**域名（做内容脱敏）：内置精确清单或用户自定义清单。
+    pub fn is_ai_host_exact(&self, host: &str) -> bool {
+        is_ai_host_exact(host) || self.is_custom_host(host)
+    }
+
+    fn is_custom_host(&self, host: &str) -> bool {
+        let h = normalize_host(host);
+        self.custom_hosts_snapshot().iter().any(|c| *c == h)
+    }
+
+    /// 当前全部**精确接管**域名（内置 + 自定义），hosts 块生成用。
+    pub fn exact_hosts(&self) -> Vec<String> {
+        let mut v: Vec<String> = AI_HOSTS.iter().map(|s| s.to_string()).collect();
+        v.extend(self.custom_hosts_snapshot());
+        v
+    }
+
+    /// hosts 标记块内容（内置 + 自定义域名）。
+    pub fn hosts_block(&self) -> String {
+        let exact = self.exact_hosts();
+        let refs: Vec<&str> = exact.iter().map(|s| s.as_str()).collect();
+        crate::hosts::build_block(&refs)
     }
 
     /// 保险柜路径保护条目清单（响应侧访问告警用）。
