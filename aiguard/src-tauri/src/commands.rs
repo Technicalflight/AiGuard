@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use aiguard_core::audit::SIGNAL_CATALOG;
 use aiguard_core::detector::{default_rule_specs, Detector, RuleSpec};
+use aiguard_core::locker::LockerConfig;
 use aiguard_core::secure::RestoreLimits;
 use aiguard_core::semantic::SemanticConfig;
 use serde::{Deserialize, Serialize};
@@ -661,7 +662,10 @@ pub fn set_semantic_config(
     let mut cfg = config;
     cfg.sanitize();
     let specs = load_specs(&state)?;
-    let detector = aiguard_core::detector::Detector::from_specs(&specs)?.with_semantic(&cfg);
+    let locker = load_locker_config(&state);
+    let detector = Detector::from_specs(&specs)?
+        .with_semantic(&cfg)
+        .with_locker(&locker);
     let json = serde_json::to_string(&cfg).map_err(|e| safe_err(&e))?;
     state.store.kv_set(KV_SEMANTIC_CONFIG, &json)?;
     let arc = std::sync::Arc::new(detector);
@@ -680,6 +684,58 @@ fn load_semantic_config(state: &Arc<AppState>) -> SemanticConfig {
         .ok()
         .flatten()
         .and_then(|json| serde_json::from_str::<SemanticConfig>(&json).ok())
+        .unwrap_or_default()
+}
+
+// ─────────────────────────── 保险柜（用户录入敏感值出站防护） ───────────────────────────
+
+/// 保险柜配置的 KV 键。
+const KV_LOCKER_CONFIG: &str = "locker.config";
+
+/// 读取保险柜配置。
+#[tauri::command]
+pub fn get_locker_config(state: State<'_, Arc<AppState>>) -> Result<LockerConfig, String> {
+    Ok(load_locker_config(&state))
+}
+
+/// 保存保险柜配置：清洗 → 落盘 → 连同语义配置热重建 Detector → 同步响应侧键名表。
+///
+/// 重建失败不落盘（语义 / 保险柜与规则是同一个 Detector 快照，不能只改一半）。
+/// 条目值以配置 JSON 存本地库，与规则 / 名单同级保护（见 core/src/locker.rs 存储说明）。
+#[tauri::command]
+pub fn set_locker_config(
+    state: State<'_, Arc<AppState>>,
+    config: LockerConfig,
+) -> Result<LockerConfig, String> {
+    let mut cfg = config;
+    cfg.sanitize();
+    let specs = load_specs(&state)?;
+    let semantic = load_semantic_config(&state);
+    let detector = Detector::from_specs(&specs)?
+        .with_semantic(&semantic)
+        .with_locker(&cfg);
+    let json = serde_json::to_string(&cfg).map_err(|e| safe_err(&e))?;
+    state.store.kv_set(KV_LOCKER_CONFIG, &json)?;
+    let arc = std::sync::Arc::new(detector);
+    match state.detector.write() {
+        Ok(mut g) => *g = arc,
+        Err(poisoned) => *poisoned.into_inner() = arc,
+    }
+    match state.locker.write() {
+        Ok(mut g) => *g = cfg.clone(),
+        Err(poisoned) => *poisoned.into_inner() = cfg.clone(),
+    }
+    Ok(cfg)
+}
+
+/// 从 KV 读保险柜配置（损坏 / 缺失时回空配置）。
+fn load_locker_config(state: &Arc<AppState>) -> LockerConfig {
+    state
+        .store
+        .kv_get(KV_LOCKER_CONFIG)
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str::<LockerConfig>(&json).ok())
         .unwrap_or_default()
 }
 
@@ -2029,7 +2085,15 @@ fn save_specs(state: &Arc<AppState>, specs: Vec<RuleSpec>) -> Result<(), String>
 /// 语义配置一并注入（语义重建失败只降级为默认关闭，不影响正则规则）。
 pub fn init_rules(state: &Arc<AppState>) {
     let semantic = load_semantic_config(state);
-    let build = |specs: Vec<RuleSpec>| Detector::from_specs(&specs).map(|d| d.with_semantic(&semantic));
+    let locker = load_locker_config(state);
+    // 响应侧访问告警的键名表与 KV 同步（保险柜保存命令之外唯一的加载点）
+    match state.locker.write() {
+        Ok(mut g) => *g = locker.clone(),
+        Err(poisoned) => *poisoned.into_inner() = locker.clone(),
+    }
+    let build = |specs: Vec<RuleSpec>| {
+        Detector::from_specs(&specs).map(|d| d.with_semantic(&semantic).with_locker(&locker))
+    };
     match load_specs(state).and_then(build) {
         Ok(detector) => {
             let arc = Arc::new(detector);

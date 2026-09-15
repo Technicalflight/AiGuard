@@ -1265,3 +1265,24 @@ export async function setSemanticConfig(config: SemanticConfig): Promise<Semanti
   if (!isTauri()) return { ...config };
   return tauriInvoke<SemanticConfig>("set_semantic_config", { config });
 }
+
+export interface LockerEntry {
+  name: string;
+  value: string;
+  action: string;
+  enabled: boolean;
+}
+
+export interface LockerConfig {
+  entries: LockerEntry[];
+}
+
+export async function getLockerConfig(): Promise<LockerConfig> {
+  if (!isTauri()) return { entries: [] };
+  return tauriInvoke<LockerConfig>("get_locker_config");
+}
+
+export async function setLockerConfig(config: LockerConfig): Promise<LockerConfig> {
+  if (!isTauri()) return { ...config };
+  return tauriInvoke<LockerConfig>("set_locker_config", { config });
+}

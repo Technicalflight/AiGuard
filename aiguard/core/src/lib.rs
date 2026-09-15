@@ -4,6 +4,7 @@
 //!
 //! - [`detector`]: 敏感信息检测引擎（身份证 / 手机号 / 银行卡 / 邮箱 / API Key / IP）
 //! - [`semantic`]: 语义检测层（熵值 / 中文姓名 / 地址 / 机构名启发式 + 产品代号白名单）
+//! - [`locker`]: 保险柜（用户录入敏感值出站精确匹配 + 访问对象告警模式）
 //! - [`vault`]: 原文 ↔ 占位符映射表（会话隔离 + TTL，仅内存）
 //! - [`stream`]: 流式还原状态机（SSE chunk 中占位符可能被拆开）
 //! - [`sse`]: SSE 帧状态机（切帧 / 格式校验 / 缓冲上限）
@@ -15,6 +16,7 @@
 pub mod audit;
 pub mod detector;
 pub mod inspect;
+pub mod locker;
 pub mod mem;
 pub mod secure;
 pub mod semantic;
