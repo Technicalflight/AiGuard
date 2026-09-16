@@ -266,7 +266,7 @@ async fn run_step(
     }
 }
 
-/// 用系统 curl.exe 经本地代理发一个 POST（CONNECT + TLS 全由 curl 处理；
+/// 用系统 curl 经本地代理发一个 POST（CONNECT + TLS 全由 curl 处理；
 /// `-k` 跳过自签 CA 校验——MITM 证书本就是本地生成的）。
 async fn curl_post(
     url: &str,
@@ -281,7 +281,7 @@ async fn curl_post(
     ));
     std::fs::write(&tmp, body.as_bytes()).map_err(|e| safe_err(&e))?;
 
-    let mut cmd = std::process::Command::new("curl.exe");
+    let mut cmd = std::process::Command::new(curl_command_name());
     cmd.arg("-s")
         .arg("-k")
         .arg("--proxy")
@@ -308,7 +308,8 @@ async fn curl_post(
     let out = tokio::task::spawn_blocking(move || cmd.output())
         .await
         .map_err(|e| safe_err(&e))?
-        .map_err(|e| safe_err(&e))?;
+        // spawn 失败（典型：系统没装 curl）时裸 io error 不可读，包一层说明依赖
+        .map_err(|e| curl_spawn_err(&e))?;
 
     let _ = std::fs::remove_file(&tmp);
 
@@ -335,6 +336,26 @@ async fn curl_post(
         return Err(msg);
     }
     Ok((status, body))
+}
+
+/// 主动核查发出的请求由系统 curl 执行：Windows 用系统自带的 curl.exe
+/// （Win10 1803+ 在 System32 自带），其余平台走 PATH 里的 curl——
+/// macOS / Linux 上没有 curl.exe，硬编码会让主动核查在非 Windows 平台必然失败。
+fn curl_command_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "curl.exe"
+    } else {
+        "curl"
+    }
+}
+
+/// 执行系统 curl 的 io 失败包装：裸 io error（如 "program not found"）看不出
+/// 与主动核查的关系，包一层说明「主动核查依赖系统 PATH 中的 curl」。
+fn curl_spawn_err(e: &std::io::Error) -> String {
+    format!(
+        "启动系统 curl 失败（{}）。主动核查依赖系统 PATH 中的 curl 命令发送核查请求，请确认已安装 curl 并可在终端直接运行",
+        safe_err(e)
+    )
 }
 
 /// 归一化目标域名：去 scheme、去路径、去端口、转小写。
@@ -416,6 +437,16 @@ fn local_time_string() -> String {
 mod tests {
     use super::*;
     use aiguard_core::inspect::CheckProfile;
+
+    #[test]
+    fn test_curl_command_name_platform() {
+        // Windows 走 System32 自带的 curl.exe；其余平台走 PATH 里的 curl
+        if cfg!(target_os = "windows") {
+            assert_eq!(curl_command_name(), "curl.exe");
+        } else {
+            assert_eq!(curl_command_name(), "curl");
+        }
+    }
 
     #[test]
     fn test_normalize_host() {
