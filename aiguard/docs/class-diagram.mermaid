@@ -1,0 +1,451 @@
+classDiagram
+    %% ═══════ 检测引擎（core/src/detector.rs）—— 现有结构 ═══════
+
+    class PiiKind {
+        <<enum>>
+        IdCardCn
+        PhoneCn
+        BankCard
+        Email
+        ApiKey
+        IpAddress
+        +tag() &str
+        +from_tag(tag) Option~PiiKind~
+        +display_name() &str
+    }
+
+    class Action {
+        <<enum>>
+        Mask
+        Block
+        Warn
+        +as_str() &str
+        +from_str(s) Action
+    }
+
+    class RuleSpec {
+        +id: String
+        +tag: String
+        +name: String
+        +regex: String
+        +action: String
+        +enabled: bool
+        +builtin: bool
+        %% ❌ 缺失：severity / min_confirm / require_validator
+        %% ❌ 缺失：host_scope / path_scope / priority
+        %% ❌ 缺失：rollout / version / updated_at
+    }
+
+    class Rule {
+        <<internal>>
+        -tag: String
+        -regex: Regex
+        -validate: Option~fn~(&str) bool
+        -digit_adjacent: bool
+        -action: Action
+        -enabled: bool
+    }
+
+    class Hit {
+        +tag: String
+        +text_len: usize
+        +start: usize
+        +action: Action
+        %% ❌ 缺失：rule_id（无法归因到规则）
+    }
+
+    class Detector {
+        -rules: Vec~Rule~
+        -semantic: SemanticEngine
+        -locker: LockerEngine
+        +from_specs(specs) Result
+        +with_semantic(cfg) Detector
+        +with_locker(cfg) Detector
+        +set_semantic(cfg) void
+        +set_locker(cfg) void
+        +scan(text) Vec~Hit~
+        +scrub(text, replace) (String, Vec~Hit~)
+        -collect_hits(text) Vec~Hit~
+    }
+
+    class RegexHit {
+        +start: usize
+        +len: usize
+        +text: String
+    }
+
+    RuleSpec ..> Rule : compile_rule()
+    Detector *-- "0..*" Rule
+    Detector --> SemanticEngine : 附加命中
+    Detector --> LockerEngine : 附加命中
+    Detector ..> Hit : 产出
+    Rule ..> Hit : 匹配产出
+
+    %% ═══════ 语义层（core/src/semantic.rs）═══════
+
+    class SemanticConfig {
+        +entropy: bool
+        +person: bool
+        +org: bool
+        +address: bool
+        +terms: Vec~String~
+        %% ❌ 缺失：action（恒 Mask 不可配）
+        %% ❌ 缺失：entropy_threshold（硬编码 3.3）
+        %% ❌ 缺失：user_blocklist / user_context_terms
+        +sanitize() void
+        +any_enabled() bool
+    }
+
+    class SemanticEngine {
+        -cfg: SemanticConfig
+        -entropy_re: Option~Regex~
+        -person_re: Option~Regex~
+        -person_title_re: Option~Regex~
+        -address_area_re: Option~Regex~
+        -address_street_re: Option~Regex~
+        -org_re: Option~Regex~
+        +new(cfg) SemanticEngine
+        +disabled() SemanticEngine
+        +hits(text) Vec~RawHit~
+        -scan_entropy(text, out) void
+        -scan_person(text, out) void
+        -scan_org(text, out) void
+        -scan_address(text, out) void
+        -scan_terms(text, out) void
+    }
+
+    class RawHit {
+        +start: usize
+        +len: usize
+        +tag: &static str
+    }
+
+    SemanticEngine *-- SemanticConfig
+    SemanticEngine ..> RawHit : 产出
+
+    %% ═══════ 保险柜 / 流式（core/src）═══════
+
+    class LockerEngine {
+        +new(cfg) LockerEngine
+        +disabled() LockerEngine
+        +scan(text) Vec~LockerHit~
+    }
+    class LockerConfig {
+        +entries: Vec~LockerEntry~
+    }
+    class Vault {
+        +new() Vault
+        +get_or_create(session, orig, tag) String
+        +session_count(session) usize
+        +session_ids() Vec~String~
+        +idle_for(session) Option~Duration~
+        +is_pinned(session) bool
+        +pin(session) void
+        +unpin(session) void
+        +clear_session(session) void
+    }
+    LockerEngine *-- LockerConfig
+
+    %% ═══════ 审计层（core/src/audit.rs）—— 9 信号 ═══════
+
+    class Severity {
+        <<enum>>
+        Low
+        Medium
+        High
+        Critical
+        +as_str() &str
+        +rank() u8
+        +parse(s) Option~Severity~
+    }
+
+    class Finding {
+        +signal: String
+        +severity: Severity
+        +kind: String
+        +evidence: String
+        +new(signal, severity, evidence, kind) Finding
+        +display() &str
+        %% evidence 强制脱敏：只留 kind + len + sha256[:8]
+    }
+
+    class SignalCatalog {
+        <<constants 9>>
+        error_leak 报错泄密
+        identity_swap 模型偷换
+        tool_call_rewrite 复读篡改
+        sse_anomaly 流式异常
+        response_poison 响应夹带
+        cross_request_pollution 记忆残留
+        dangerous_action 高危指令
+        tool_call_injection 工具注入
+        locker_access 保险柜访问
+    }
+
+    class AuditScanner {
+        <<functions>>
+        +scan_error_leak(status, body, headers) Vec~Finding~
+        +scan_identity_swap(req_model, resp_model) Vec~Finding~
+        +scan_tool_call_rewrite(expected, actual) Vec~Finding~
+        +scan_sse_anomaly(events) Vec~Finding~
+        +scan_response_poison(text, request_text) Vec~Finding~
+        +scan_cross_request_pollution(text, nonces) Vec~Finding~
+        +scan_dangerous_action(text, request_text) Vec~Finding~
+        +scan_tool_call_injection(body) Vec~Finding~
+        +scan_locker_access(text, keys, paths) Vec~Finding~
+        +dedupe_findings(items) Vec~Finding~
+        +redact_evidence(snippet, kind) String
+        +short_hash(s) String
+    }
+
+    class SseEventView {
+        +event_type: Option~String~
+        +data: Value
+    }
+
+    AuditScanner ..> Finding : 产出
+    Finding ..> Severity
+    AuditScanner ..> SignalCatalog
+    AuditScanner ..> SseEventView
+
+    %% ═══════ 名单（src-tauri/src/state.rs）═══════
+
+    class WhitelistKind {
+        <<enum>>
+        Domain
+        Process
+        %% ❌ 缺失：Rule（规则级豁免）
+        %% ❌ 缺失：Path（路径级豁免）
+    }
+
+    class WhitelistEntry {
+        +id: String
+        +kind: WhitelistKind
+        +pattern: String
+        +scrub: bool
+    }
+
+    class BlacklistEntry {
+        +id: String
+        +kind: WhitelistKind
+        +pattern: String
+        +action: String
+    }
+
+    class HitExemption {
+        <<❌ 方案 3 新增>>
+        +rule_id: String
+        +host: String
+        +req_hash: String
+        +ttl_secs: u64
+    }
+
+    class DomainMatcher {
+        <<functions>>
+        +domain_matches(pattern, host) bool
+        +process_path_matches(pattern, exe) bool
+        +normalize_host(host) String
+    }
+
+    WhitelistEntry --> WhitelistKind
+    BlacklistEntry --> WhitelistKind
+    DomainMatcher ..> WhitelistEntry
+    DomainMatcher ..> BlacklistEntry
+
+    %% ═══════ 状态与配置（state.rs）═══════
+
+    class AuditConfig {
+        +enabled: bool
+        +signals: Map~String, bool~
+        +severity_floor: String
+        +retention_days: i64
+        +probes_enabled: bool
+        +signal_enabled(signal) bool
+        +allows(severity) bool
+        -floor_rank() u8
+    }
+
+    class NotifyConfig {
+        +enabled: bool
+        +severity_floor: String
+        +allows(severity) bool
+    }
+
+    class Config {
+        +proxy_port: u16
+        +mode: ProxyMode
+        +enabled: bool
+        +restore_enabled: bool
+        %% ❌ 缺失：采样率 / 灰度开关
+    }
+
+    class ReqInfo {
+        +model: Option~String~
+        +body_text: String
+        +hash: String
+        +probe_id: String
+        +markers: Vec~String~
+    }
+
+    class FindingMeta {
+        +sid: String
+        +host: String
+        +method: String
+        +path: String
+        +request_hash: String
+        +response_hash: String
+        +probe_id: String
+    }
+
+    class AppState {
+        +detector: RwLock~Arc~Detector~~
+        +locker: RwLock~LockerConfig~
+        +vault: Arc~Vault~
+        +audit: RwLock~AuditConfig~
+        +audit_writer: AuditWriter
+        +whitelist: RwLock~Vec~WhitelistEntry~~
+        +blacklist: RwLock~Vec~BlacklistEntry~~
+        +recent_events: RwLock~VecDeque~AuditEventRow~~
+        +notify: RwLock~NotifyConfig~
+        +req_ctx: Mutex~Map~
+        +session_meta: RwLock~Map~
+        +record_findings(findings, meta) usize
+        +evaluate_whitelist... %% 实为 ProxyServer 方法
+        +detector_snapshot() Arc~Detector~
+        +purge_all_memory() (usize, usize, usize)
+        +apply_audit_config(cfg) Result
+        -dispatch_notification(events) void
+    }
+
+    AppState *-- AuditConfig
+    AppState *-- NotifyConfig
+    AppState *-- Config
+    AppState *-- WhitelistEntry
+    AppState *-- BlacklistEntry
+    AppState *-- ReqInfo
+    AppState o-- Detector
+    AppState o-- Vault
+    AppState ..> FindingMeta
+
+    %% ═══════ 持久化（store.rs）═══════
+
+    class RequestLog {
+        +id: i64
+        +ts: String
+        +host: String
+        +path: String
+        +session: String
+        +kinds: String
+        +action: String
+        +req_hash: String
+        +blocked: i64
+        %% ❌ 缺失：rule_id / rule_ver / user_label / label_ts
+    }
+
+    class AuditEventRow {
+        +seq: i64
+        +ts: f64
+        +sid: String
+        +host: String
+        +method: String
+        +path: String
+        +signal_type: String
+        +severity: String
+        +evidence: String
+        +request_hash: String
+        +response_hash: String
+        +probe_id: String
+        %% ❌ 缺失：rule_id / rule_ver / user_label / label_ts
+    }
+
+    class Store {
+        +open(path) Result
+        +log_request(...) Result~i64~
+        +list_requests_page(...) Result
+        +stats() Result
+        +insert_audit_events(rows) Result~usize~
+        +fetch_audit_events(...) Result
+        +audit_signal_counts() Result
+        +prune_audit_events(days) Result~usize~
+        +kv_get(key) Result
+        +kv_set(key, value) Result
+    }
+
+    class AuditWriter {
+        -tx: Sender~AuditEventRow~
+        -cutoff: Arc~Mutex~f64~~
+        -dropped: Arc~AtomicU64~
+        +spawn(db_path) Result~AuditWriter~
+        +enqueue(ev) void
+        +set_cutoff(ts) void
+        +dropped_count() u64
+    }
+
+    Store ..> RequestLog
+    Store ..> AuditEventRow
+    AuditWriter ..> AuditEventRow
+    AuditWriter ..> Store
+
+    %% ═══════ 代理层（proxy.rs）—— 决策点 ═══════
+
+    class ProxyServer {
+        -state: Arc~AppState~
+        +evaluate_blacklist(addr, host) Option~String~
+        +evaluate_whitelist(addr, host) (bool, bool)
+        +process_response(ctx, res) Response
+        +log_request(...) void
+        +emit(session, kinds, host, action) void
+        %% ⚠ 误拦截两大高风险点：
+        %%   黑名单 block → 403（无闸门）
+        %%   规则 Block → 403（无置信度闸门）
+    }
+
+    class ScrubJsonValue {
+        <<function>>
+        +scrub_json_value(value, detector, vault, session, kinds, blocked, hit_count, force_mask) void
+        %% ❌ 方案 2 需在此加 min_confirm / require_validator 闸门
+    }
+
+    ProxyServer --> AppState
+    ProxyServer ..> ScrubJsonValue
+    ScrubJsonValue ..> Detector
+    ScrubJsonValue ..> Vault
+
+    %% ═══════ 方案新增结构（虚线 = 待实现）═══════
+
+    class SampleFingerprint {
+        <<❌ 方案 6 新增>>
+        +rule_id: String
+        +action: String
+        +host: String
+        +path: String
+        +hit_len_bucket: String
+        +hit_sha256_8: String
+        +context_shape: String
+        +validators_passed: Vec~bool~
+        %% 严格无原文：隐私红线
+    }
+
+    class RuleVersion {
+        <<❌ 方案 5 新增>>
+        +version: u32
+        +ts: f64
+        +snapshot_json: String
+        +source: String
+    }
+
+    class MetricsSnapshot {
+        <<❌ 方案 9 新增>>
+        +ts: f64
+        +total_req: i64
+        +total_hits: i64
+        +blocked: i64
+        +fp_labeled: i64
+        +fp_rate: f64
+        +fr_rate: f64
+        +per_signal_json: String
+    }
+
+    SampleFingerprint ..> Detector
+    RuleVersion ..> RuleSpec
+    MetricsSnapshot ..> AuditEventRow

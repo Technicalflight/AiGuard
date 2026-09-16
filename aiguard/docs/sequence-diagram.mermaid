@@ -1,0 +1,104 @@
+sequenceDiagram
+    autonumber
+    participant U as 用户 / AI 客户端
+    participant PX as ProxyServer (proxy.rs)
+    participant BL as 黑名单评估
+    participant WL as 白名单评估
+    participant DET as Detector (core/detector.rs)
+    participant SEM as SemanticEngine (core/semantic.rs)
+    participant LK as LockerEngine (core/locker.rs)
+    participant V as Vault
+    participant ST as AppState (state.rs)
+    participant DB as SQLite (store.rs)
+
+    Note over U,DB: ═══ 请求侧：检测 → 决策 → 记录（当前无反馈闭环 / 无灰度）═══
+
+    U->>PX: POST https://chat.deepseek.com/api/v0/chat
+    PX->>ST: is_ai_host(host)
+    ST-->>PX: true
+    PX->>ST: is_ai_host_exact(host)
+    alt 仅后缀命中（CDN / 上传子域）
+        PX->>DB: log_passthrough
+        PX-->>U: 原样透传（不脱敏 / 不拦截）
+    else 精确命中（对话主域）
+        PX->>BL: evaluate_blacklist(client_addr, host)
+        BL-->>PX: Option(block | mask)
+        alt 黑名单 block
+            PX->>DB: log_request(action=block, blocked=1)
+            PX-->>U: 403 blacklisted_blocked ⛔ 误拦截高发点
+        end
+        PX->>WL: evaluate_whitelist(client_addr, host)
+        WL-->>PX: (whitelisted, scrub_allowed)
+        alt whitelisted && !scrub_allowed
+            PX->>DB: log_passthrough
+            PX-->>U: 完全直通
+        end
+        Note over PX: force_mask = 黑名单命中 ∪ (白名单 && scrub)
+
+        PX->>ST: remember_req_info(model / body_text / hash)
+        PX->>DET: detector_snapshot()
+        DET->>DET: collect_hits(text)
+        loop 每条 enabled 规则
+            DET->>DET: regex.find_iter
+            DET->>DET: validate(校验位 / Luhn / IPv4)
+            DET->>DET: is_digit_adjacent 邻接拒绝
+        end
+        DET->>SEM: hits(text)  ← 语义层附加
+        Note over SEM: 熵≥3.3 / 姓名需上下文 / 地址锚定<br/>恒返回 Mask（不可配 Warn）❌
+        SEM-->>DET: Vec RawHit(tag=PERSON/ORG/ADDRESS/HIGH_ENTROPY)
+        DET->>LK: scan(text)  ← 保险柜附加
+        LK-->>DET: Vec Hit(action 按条目)
+        DET->>DET: sort_by(start asc, text_len desc)
+        DET->>DET: 去重叠（保先出现者）
+        DET-->>PX: Vec Hit(tag, start, text_len, action)
+
+        loop 每个 String 值
+            PX->>V: get_or_create(session, original, tag)
+            V-->>PX: [[PII:TAG:...]] 占位符
+        end
+        Note over PX: scrub_json_value(force_mask)<br/>blocked = 命中 Block 且 !force_mask ❌ 无置信度闸门
+
+        alt blocked == true
+            PX->>V: unpin(session)
+            PX->>DB: log_request(action=block, blocked=1)
+            PX-->>U: 403 sensitive_content_blocked ⛔ 误拦截高发点
+        else 已脱敏
+            PX->>V: pin(session)
+            PX->>DET: scan_tool_call_injection(json)
+            DET-->>PX: Vec Finding（工具注入）
+            PX->>ST: record_findings(findings, meta)
+            PX-->>U: 转发修改后的请求（占位符）
+        else 无命中
+            PX->>DB: log_request(passthrough)
+            PX-->>U: 原样透传
+        end
+    end
+
+    Note over U,DB: ═══ 响应侧：还原 + 只读审计（不落原文）═══
+
+    U->>PX: 上游响应 (SSE / JSON)
+    PX->>ST: session_for_addr + req_info_for
+    alt status >= 400
+        PX->>PX: scan_error_leak(body, headers)  ← 仅 4xx/5xx 触发
+        PX->>ST: record_findings
+    else 受守护 && 可还原文本
+        PX->>PX: scan_response_poison(text, request_text)
+        PX->>PX: scan_dangerous_action(restored_text, request_text)
+        PX->>PX: scan_sse_anomaly(events)
+        PX->>PX: scan_locker_access(text, locker_keys, locker_paths)
+        PX->>ST: record_findings(findings, meta)
+        PX->>V: 占位符还原为原文
+    else 压缩 / 二进制 / 静态资源
+        PX-->>U: 完全透传（占位符不还原 → 隐性误报风险）
+    end
+
+    Note over ST,DB: record_findings 双层过滤：signal_enabled ∩ allows(severity)
+    ST->>DB: enqueue_batch(AuditEventRow)
+    ST->>U: emit_event("security-alert", ev)
+    ST->>U: dispatch_notification（窗口未聚焦 + 同批一条 + 3s 限流）
+    Note over DB: ❌ AuditEventRow 无 user_label / rule_id / rule_ver<br/>❌ 无任何"标记为误报"回流路径<br/>❌ 无法计算 FP Rate / FR Rate
+
+    Note over U,DB: ═══ 期望新增（见方案 1 / 2 / 4）═══
+    U-->>PX: label_event(seq, "fp")
+    PX->>DB: UPDATE user_label='fp', label_ts
+    Note over PX: 方案 2：Block 前过 min_confirm + require_validator 闸门<br/>方案 4：rollout<1.0 的规则按 session 稳定分桶灰度

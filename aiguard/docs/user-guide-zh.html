@@ -1,0 +1,1087 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AiGuard 使用手册（零基础版）</title>
+<style>
+:root{
+  --bg:#f6f7f8; --surface:#ffffff; --ink:#1a2226; --ink2:#5f6e68;
+  --line:#e4e9e7; --brand:#0e8a5f; --brand-weak:#e6f4ee;
+  --rail:#0f1714; --warn:#b45309; --warn-weak:#fdf3e3;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--ink);line-height:1.75;font-size:15px;}
+.wrap{max-width:940px;margin:0 auto;padding:36px 20px 80px;}
+.hero{background:linear-gradient(135deg,#0f1714 0%,#123528 100%);color:#fff;
+  border-radius:16px;padding:40px 44px;margin-bottom:22px;}
+.hero h1{font-size:30px;font-weight:700;letter-spacing:.5px;}
+.hero .sub{color:#9fc6b4;margin-top:10px;font-size:14px;}
+.hero .badges{margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;}
+.hero .badge{background:rgba(14,138,95,.25);border:1px solid rgba(47,190,139,.5);
+  color:#7fe0bd;font-size:12px;padding:3px 10px;border-radius:99px;}
+.toc{background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:18px 22px;margin-bottom:30px;}
+.toc h2{font-size:15px;color:var(--ink2);margin-bottom:10px;font-weight:600;}
+.toc-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 18px;}
+.toc-link{color:var(--brand);text-decoration:none;font-size:14px;padding:3px 0;}
+.toc-link:hover{text-decoration:underline;}
+article{background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:44px 52px;}
+article h1{display:none}
+article h2{font-size:22px;color:var(--rail);margin:40px 0 16px;padding-bottom:8px;
+  border-bottom:2px solid var(--brand-weak);}
+article h2:first-child{margin-top:0}
+article h3{font-size:17px;margin:26px 0 10px;color:var(--rail);}
+article p{margin:10px 0;}
+article ul,article ol{margin:10px 0 10px 1.6em;}
+article li{margin:4px 0;}
+article strong{color:var(--rail);}
+article a{color:var(--brand);}
+article hr{border:none;border-top:1px solid var(--line);margin:34px 0;}
+article code{background:#eef1f0;border-radius:5px;padding:1px 6px;
+  font-family:Consolas,monospace;font-size:13px;color:#0b5c41;}
+table{width:100%;border-collapse:collapse;margin:14px 0 20px;font-size:14px;}
+th{background:#0f1714;color:#e8ecea;text-align:left;padding:9px 12px;
+  font-weight:500;}
+td{border:1px solid var(--line);padding:8px 12px;vertical-align:top;}
+tr:nth-child(even) td{background:#f8faf9;}
+blockquote{margin:16px 0;padding:12px 18px;border-left:4px solid var(--brand);
+  background:var(--brand-weak);border-radius:0 10px 10px 0;color:#0b5c41;
+  font-size:14px;}
+blockquote.shot{border-left:4px dashed var(--warn);background:var(--warn-weak);
+  color:var(--warn);border-radius:0 10px 10px 0;}
+.foot{color:var(--ink2);font-size:13px;margin-top:26px;text-align:center;}
+@media print{
+  body{background:#fff}
+  .wrap{max-width:100%;padding:0}
+  .hero{border-radius:0}
+  article{border:none;padding:10px 0}
+  th{background:#eee;color:#111}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <h1>AiGuard 使用手册（零基础版）</h1>
+    <div class="sub">敏感信息不出本机的 AI 流量守护工具 · 面向完全不懂技术的用户，每一步都可照做</div>
+    <div class="badges">
+      <span class="badge">适用版本 v0.1.1</span>
+      <span class="badge">v0.1.2 新功能已标注</span>
+      <span class="badge">Windows 10/11 · macOS 10.15+ · Linux x64</span>
+      <span class="badge">无需编程知识</span>
+    </div>
+  </div>
+  <nav class="toc">
+    <h2>目录</h2>
+    <div class="toc-grid"><a class="toc-link" href="#_1">一、先弄明白：这是一个什么软件？</a>
+<a class="toc-link" href="#_2">二、安装前的准备</a>
+<a class="toc-link" href="#_3">三、第一次启动：三步向导</a>
+<a class="toc-link" href="#_5">四、日常使用全流程（核心操作）</a>
+<a class="toc-link" href="#_6">五、界面导览：每个区域、按钮、表单项的作用</a>
+<a class="toc-link" href="#_7">六、进阶功能</a>
+<a class="toc-link" href="#_8">七、查看与导出结果</a>
+<a class="toc-link" href="#faq">八、常见问题（FAQ）</a>
+<a class="toc-link" href="#_9">九、易错点速查表</a>
+<a class="toc-link" href="#_10">十、隐私与安全设计（为什么可以放心用）</a></div>
+  </nav>
+  <article><h1 id="aiguard">AiGuard 使用手册（零基础版）</h1>
+<blockquote>
+<p>适用版本：v0.1.1（2026-09）· 平台：Windows 10/11 · macOS 10.15+ · Linux x64
+本手册面向完全不懂技术的普通用户：每一步都可以照着做，不需要任何编程知识。</p>
+</blockquote>
+<hr />
+<h2 id="_1">一、先弄明白：这是一个什么软件？</h2>
+<h3 id="11">1.1 一句话介绍</h3>
+<p><strong>AiGuard（AI 安全卫士）是装在你自己电脑上的「AI 对话安检门」</strong>：你发给 AI 的敏感信息（身份证号、手机号、银行卡号、密码、API 密钥等），它会先在本机换成"代号"再发出去；AI 写完回复后，它再把代号悄悄换回真实数据。<strong>AI 服务商从头到尾只见过"代号"，真实数据永远不出你的电脑。</strong></p>
+<h3 id="12">1.2 它解决什么问题？（一个比喻）</h3>
+<p>把真实身份证号、银行卡号直接粘贴给 AI，就像把贵重物品裸露着交给快递公司——对方看得一清二楚，还可能留存底单。</p>
+<p>AiGuard 的做法是：</p>
+<table>
+<thead>
+<tr>
+<th>步骤</th>
+<th>发生什么</th>
+<th>你能感觉到吗</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>① 你发出消息</td>
+<td>软件在本机拦下请求，把身份证号等换成代号（如 <code>[[PII:IDCARD:8f3a2b1c]]</code>）</td>
+<td>无感知，速度几乎不变</td>
+</tr>
+<tr>
+<td>② AI 收到</td>
+<td>只看到代号，不知道真实内容</td>
+<td>无感知</td>
+</tr>
+<tr>
+<td>③ AI 回复</td>
+<td>回复里带着代号回到本机，软件把代号换回真实内容</td>
+<td>你看到的就是真实数据</td>
+</tr>
+<tr>
+<td>④ 全程</td>
+<td>日志只记录"命中了什么类型"，不保存任何原文</td>
+<td>审计页可查，无隐私泄露风险</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13">1.3 适合谁用？</h3>
+<table>
+<thead>
+<tr>
+<th>人群</th>
+<th>典型场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>经常和 AI 聊天的人</td>
+<td>让 AI 帮忙写投诉信、分析账单、处理合同，免不了粘贴个人信息</td>
+</tr>
+<tr>
+<td>开发者 / 技术人员</td>
+<td>在对话里粘贴报错日志、配置文件、代码，里面常含 API 密钥、内网地址</td>
+</tr>
+<tr>
+<td>公司职员</td>
+<td>用 AI 处理客户资料、报表，需要合规地避免数据外流</td>
+</tr>
+<tr>
+<td>团队 / 企业</td>
+<td>需要"数据不出本机"的可审计 AI 使用通道</td>
+</tr>
+</tbody>
+</table>
+<h3 id="14">1.4 它管不了什么（诚实的边界）</h3>
+<ul>
+<li>只守护<strong>发往 AI 服务的流量</strong>（OpenAI、Anthropic、DeepSeek、Kimi、智谱、通义、文心、豆包、腾讯元宝等主流服务的 API 与网页域名）。你访问普通网站它一概不碰。</li>
+<li>使用了<strong>证书固定</strong>（certificate pinning）的应用会自动放行，守护不到。</li>
+<li>个别走 QUIC/HTTP3 直连的流量不经过系统代理，守护不到。</li>
+<li>它是本机安检门，不能清除你电脑上已有的病毒或键盘记录器。</li>
+</ul>
+<h3 id="15">1.5 核心能力一览</h3>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>6 类内置检测规则</td>
+<td>身份证号 / 手机号 / 银行卡号 / 邮箱 / API 密钥 / IP 地址</td>
+</tr>
+<tr>
+<td>3 种处理动作</td>
+<td>脱敏（换代号）/ 拦截（直接挡下不出网）/ 仅提醒</td>
+</tr>
+<tr>
+<td>黑 / 白名单</td>
+<td>指定域名或程序强制拦截、强制脱敏或完全放行</td>
+</tr>
+<tr>
+<td>语义检测</td>
+<td>额外识别中文姓名、地址、机构名、高熵可疑字符串</td>
+</tr>
+<tr>
+<td>保险柜</td>
+<td>登记你的密钥和敏感文件，一旦 AI 试图读取立即告警</td>
+</tr>
+<tr>
+<td>误报反馈</td>
+<td>在请求 / 审计记录旁点「误报 / 确认」，审计页自动汇总近 30 天误报率，看清哪条规则最吵（v0.1.2 起）</td>
+</tr>
+<tr>
+<td>凭据轮换提醒</td>
+<td>保险柜登记的密钥被 AI 实际使用后自动提醒：已脱敏放行 = 黄色提示；明文外发 = 红色提醒立即轮换（v0.1.2 起）</td>
+</tr>
+<tr>
+<td>7 大防护信号</td>
+<td>持续检查上游 AI 服务有没有"泄密、偷换模型、夹带内容"等可疑行为</td>
+</tr>
+<tr>
+<td>主动核查</td>
+<td>验证上游是否偷偷存储了你的数据，输出风险报告</td>
+</tr>
+<tr>
+<td>系统托盘 + 快捷键</td>
+<td>后台常驻，<code>Ctrl+Alt+G</code> 一键开关，<code>Ctrl+Alt+X</code> 一键应急切断</td>
+</tr>
+<tr>
+<td>中英双语</td>
+<td>设置页一键切换</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_2">二、安装前的准备</h2>
+<h3 id="21">2.1 环境要求</h3>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>要求</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows</td>
+<td>10 / 11（64 位）；Win11 一般自带 WebView2，Win10 若提示缺组件按提示安装即可</td>
+</tr>
+<tr>
+<td>macOS</td>
+<td>10.15 及以上（Apple 芯片与 Intel 芯片同一个安装包）</td>
+</tr>
+<tr>
+<td>Linux</td>
+<td>x64，安装 deb 包或 AppImage（需要 WebKitGTK 4.1 运行库）</td>
+</tr>
+<tr>
+<td>硬盘空间</td>
+<td>约 100 MB</td>
+</tr>
+<tr>
+<td>管理员权限</td>
+<td><strong>常规使用不需要</strong>（证书装在"当前用户"信任库）；仅实验性 hosts 模式需要</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22">2.2 下载安装包</h3>
+<ol>
+<li>打开浏览器，访问项目发布页：<code>https://github.com/Technicalflight/AiGuard/releases</code></li>
+<li>在最新版本（如 v0.1.1）的 <strong>Assets</strong> 列表里，按你的系统下载对应文件：</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>系统</th>
+<th>选这个文件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows</td>
+<td><code>*-setup.exe</code>（推荐）或 <code>*.msi</code></td>
+</tr>
+<tr>
+<td>macOS</td>
+<td><code>*.dmg</code></td>
+</tr>
+<tr>
+<td>Linux</td>
+<td><code>*.deb</code> 或 <code>*.AppImage</code></td>
+</tr>
+</tbody>
+</table>
+<ol start="3">
+<li>Windows 双击 <code>*-setup.exe</code>，按安装向导点「下一步」即可完成。</li>
+</ol>
+<h3 id="23">2.3 首次运行可能遇到的系统提示（不是故障）</h3>
+<table>
+<thead>
+<tr>
+<th>系统提示</th>
+<th>原因</th>
+<th>怎么办</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows 蓝色弹窗「Windows 已保护你的电脑」</td>
+<td>安装包未购买数字签名（开源软件常见）</td>
+<td>点「更多信息」→ 点「仍要运行」</td>
+</tr>
+<tr>
+<td>macOS「无法验证开发者」</td>
+<td>同上</td>
+<td>在安装包图标上<strong>右键 → 打开</strong>，再点「打开」</td>
+</tr>
+<tr>
+<td>杀毒软件提示</td>
+<td>本软件包含代理与证书功能，属正常特征</td>
+<td>选择「允许」并加入信任</td>
+</tr>
+</tbody>
+</table>
+<blockquote class="shot">
+<p>📷 建议截图：安装向导界面 / Windows SmartScreen「仍要运行」按钮位置</p>
+</blockquote>
+<hr />
+<h2 id="_3">三、第一次启动：三步向导</h2>
+<p>安装完成后启动软件，会自动弹出<strong>首次运行向导</strong>，一共三步。<strong>每一步都可以跳过</strong>（向导只是检查清单，不是强制门槛），以后可随时在「设置 → 首次运行向导 → 重新运行」再来一遍。</p>
+<h3 id="1">第 1 步：安装根证书</h3>
+<ol>
+<li>点「<strong>安装根证书</strong>」按钮。</li>
+<li>系统可能弹出一次确认框，点「是 / 确定」。</li>
+<li>界面显示证书状态变为「已安装」即成功。</li>
+</ol>
+<p><strong>为什么要装证书？</strong> 就像安检员需要一张"工作证"才能拆开信封检查，AiGuard 需要一张自己签发的证书才能看懂发往 AI 的加密流量、完成脱敏。这张证书：</p>
+<ul>
+<li>只装到<strong>你当前用户</strong>的信任库，<strong>不需要管理员权限</strong>；</li>
+<li>只用于本机发往 AI 服务的流量检查，<strong>绝不能提供给任何第三方</strong>（私钥受系统加密保护）；</li>
+<li>随时可以在设置里撤销。</li>
+</ul>
+<blockquote class="shot">
+<p>📷 建议截图：向导第 1 步「安装根证书」</p>
+</blockquote>
+<h3 id="2">第 2 步：开启守护（设置系统代理）</h3>
+<ol>
+<li>点「<strong>开启守护</strong>」按钮。</li>
+<li>软件会把系统代理指向本机的安检管道（模式为"系统代理 + PAC"——普通网站全部直连不受影响，只有 AI 域名进管道）。</li>
+<li>状态变为「守护中」即成功。</li>
+</ol>
+<blockquote class="shot">
+<p>📷 建议截图：向导第 2 步「开启守护」</p>
+</blockquote>
+<h3 id="3">第 3 步：确认检测规则</h3>
+<ol>
+<li>页面会列出默认开启的检测规则（身份证 / 手机号 / 银行卡 / 邮箱 / API 密钥等）。</li>
+<li>直接点「<strong>开始使用</strong>」接受默认即可；想调整可以之后在「规则中心」慢慢改。</li>
+</ol>
+<blockquote class="shot">
+<p>📷 建议截图：向导第 3 步「检测规则」</p>
+</blockquote>
+<h3 id="_4">向导完成后的样子</h3>
+<p>进入「守护首页」，看到绿色盾牌、守护开关和四格统计数据，就可以正常使用了。</p>
+<blockquote class="shot">
+<p>📷 建议截图：向导结束后的守护首页整页</p>
+</blockquote>
+<hr />
+<h2 id="_5">四、日常使用全流程（核心操作）</h2>
+<p>按真实使用顺序，一共 6 步：</p>
+<h3 id="1_1">步骤 1：开启守护</h3>
+<p>四种方式任选其一：</p>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>操作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>标题栏</td>
+<td>点窗口右上角的「<strong>代理开关</strong>」</td>
+</tr>
+<tr>
+<td>首页</td>
+<td>点绿色大按钮「<strong>立即开启守护</strong>」</td>
+</tr>
+<tr>
+<td>托盘</td>
+<td>右键任务栏右下角盾牌图标 → 「<strong>开启守护</strong>」</td>
+</tr>
+<tr>
+<td>快捷键</td>
+<td>任意窗口下按 <code>Ctrl + Alt + G</code></td>
+</tr>
+</tbody>
+</table>
+<p>开启后：侧栏底部圆点变绿并呼吸闪烁，托盘菜单显示「状态：守护中」。</p>
+<h3 id="2-ai">步骤 2：像平常一样使用 AI</h3>
+<ul>
+<li>浏览器打开 AI 网页、桌面客户端、命令行工具，<strong>都不需要额外配置</strong>，直接正常对话即可。</li>
+<li>粘贴包含手机号、身份证号的内容后发出——软件会在后台自动完成脱敏。</li>
+</ul>
+<h3 id="3_1">步骤 3：在首页观察守护动态</h3>
+<p>首页会实时刷新：</p>
+<table>
+<thead>
+<tr>
+<th>区域</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>四格数字</td>
+<td>今日请求 / 已脱敏 / 已拦截 / 活跃会话数量</td>
+</tr>
+<tr>
+<td>脱敏流水（弹幕）</td>
+<td>滚动显示最近命中的类型与动作，如「手机号 138****5678 · 已脱敏」</td>
+</tr>
+<tr>
+<td>当前活跃会话表</td>
+<td>哪个域名、哪个程序正在被守护；点「切断」可销毁该会话的本机映射</td>
+</tr>
+<tr>
+<td>已守护 N 天</td>
+<td>累计使用天数</td>
+</tr>
+</tbody>
+</table>
+<h3 id="4">步骤 4：查看每一次请求的明细</h3>
+<ol>
+<li>点左侧导航「<strong>请求</strong>」进入实时请求页。</li>
+<li>顶部筛选按钮：「全部 / 已脱敏 / 已拦截」。</li>
+<li>表格列出时间、域名、命中类型、动作、哈希（哈希是"指纹"，不含原文）；点任意一行可看详情弹窗。</li>
+</ol>
+<h3 id="5">步骤 5：查看审计日志</h3>
+<ol>
+<li>点左侧导航「<strong>审计</strong>」。</li>
+<li>页面顶部有隐私说明：<strong>日志仅记录命中类型与哈希，不保存任何原文</strong>。</li>
+<li>支持按日期筛选，逐页翻看历史记录。</li>
+</ol>
+<h3 id="6">步骤 6：暂停守护或退出</h3>
+<table>
+<thead>
+<tr>
+<th>想做什么</th>
+<th>怎么做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>临时暂停</td>
+<td>标题栏代理开关关掉 / 托盘「暂停守护」/ <code>Ctrl+Alt+G</code>。流量恢复直连</td>
+</tr>
+<tr>
+<td>关闭窗口</td>
+<td>默认会弹询问：「退出程序」或「最小化到托盘」（可在设置改为不再询问）</td>
+</tr>
+<tr>
+<td>彻底退出</td>
+<td>托盘右键 →「退出」。<strong>退出前软件会自动还原系统代理，网络不会留后遗症</strong></td>
+</tr>
+<tr>
+<td>紧急情况</td>
+<td>点首页红色「<strong>一键应急切断</strong>」或按 <code>Ctrl+Alt+X</code>：清空本机映射 + 关闭守护 + 撤销证书，一步到位</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_6">五、界面导览：每个区域、按钮、表单项的作用</h2>
+<blockquote class="shot">
+<p>📷 建议截图：主窗口整体布局（标出左侧导航栏、顶部标题栏、内容区三部分）</p>
+</blockquote>
+<p><strong>整体布局</strong>：左侧是深墨绿色<strong>图标导航栏</strong>（64px，从上到下：首页 / 请求 / 规则 / 审计 / 设置，底部有守护状态圆点）；顶部是<strong>标题栏</strong>（左侧显示当前页面名，右侧是「代理开关」和最小化 / 最大化 / 关闭按钮）；中间是内容区。</p>
+<h3 id="51">5.1 守护首页</h3>
+<table>
+<thead>
+<tr>
+<th>区域 / 按钮</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>「立即开启守护 / 运行中 · 暂停守护」</td>
+<td>守护总开关（与标题栏代理开关联动）</td>
+</tr>
+<tr>
+<td>「一键应急切断」（红色）</td>
+<td>紧急止损：清映射 + 关守护 + 撤证书</td>
+</tr>
+<tr>
+<td>「系统代理 + PAC」徽章</td>
+<td>当前拦截模式</td>
+</tr>
+<tr>
+<td>「本机脱敏 · 数据不出网」提示卡</td>
+<td>隐私说明；内含「查看检测规则 / 查看审计日志」两个跳转链接</td>
+</tr>
+<tr>
+<td>四格统计</td>
+<td>今日请求、已脱敏、已拦截、活跃会话</td>
+</tr>
+<tr>
+<td>脱敏流水弹幕</td>
+<td>实时滚动的命中记录（打码显示）</td>
+</tr>
+<tr>
+<td>凭据使用提醒横幅</td>
+<td>保险柜里的密钥被 AI 用到时出现在页面顶部：<strong>绿色</strong> = 已脱敏放行，无需处理；<strong>红色</strong> = 明文外发，建议立即轮换。点「关闭」逐条收起（v0.1.2 起）</td>
+</tr>
+<tr>
+<td>活跃会话表</td>
+<td>域名、发起进程、占位符数量、最后活动；「切断」销毁该会话映射</td>
+</tr>
+<tr>
+<td>快捷入口</td>
+<td>安装证书 / 实时请求 / 规则中心 / 审计日志</td>
+</tr>
+<tr>
+<td>底部</td>
+<td>版本号与当前模式</td>
+</tr>
+</tbody>
+</table>
+<blockquote class="shot">
+<p>📷 建议截图：守护首页整页</p>
+</blockquote>
+<h3 id="52">5.2 实时请求页</h3>
+<table>
+<thead>
+<tr>
+<th>控件</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>筛选按钮「全部 / 已脱敏 / 已拦截」</td>
+<td>只看某一类请求</td>
+</tr>
+<tr>
+<td>表格：时间 / 域名 / 路径 / 命中类型 / 动作 / 哈希</td>
+<td>每一行是一次被守护的请求；动作可能是「已脱敏 / 已拦截 / 仅提醒 / 直通」，哈希仅是"指纹"，无法还原出内容</td>
+</tr>
+<tr>
+<td>「误报 / 确认」按钮（每行）</td>
+<td>告诉软件这条记录判得对不对：<strong>误报</strong> = 判错了（琥珀色选中），<strong>确认</strong> = 判得对（绿色选中）；再点一次撤销（v0.1.2 起）</td>
+</tr>
+<tr>
+<td>点击行 → 详情弹窗</td>
+<td>查看该次请求的命中明细（同样不含原文）</td>
+</tr>
+</tbody>
+</table>
+<blockquote class="shot">
+<p>📷 建议截图：实时请求页 + 详情弹窗（预览图中可见：命中类型以彩色标签显示，如"手机号 / 身份证 / API Key"，动作列以绿"已脱敏"、红"已拦截"、黄"仅提醒"、灰"直通"区分）</p>
+</blockquote>
+<h3 id="53">5.3 规则中心（内容最多的一页）</h3>
+<p>页面顶部有一条优先级提示：<strong>黑名单 ＞ 白名单 ＞ 检测规则</strong>（黑名单优先级最高）。</p>
+<table>
+<thead>
+<tr>
+<th>卡片 / 控件</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>「检测规则」卡片</td>
+<td>6 条内置规则，每条可：开关启用、改动作（脱敏 / 拦截 / 仅提醒）、编辑正则、设确认次数（达到次数才拦截，防误报）、一键恢复默认</td>
+</tr>
+<tr>
+<td>「新增自定义规则」</td>
+<td>自定义名称、占位标签、正则表达式、动作</td>
+</tr>
+<tr>
+<td>「内置规则预设」</td>
+<td>三档一键切换：<strong>保守 / 均衡 / 激进</strong>（见 6.1 对照表）</td>
+</tr>
+<tr>
+<td>「正则测试器」</td>
+<td>输入一段文本和正则，实时测试命中效果（与线上引擎完全一致）</td>
+</tr>
+<tr>
+<td>「执行顺序」</td>
+<td>可视化展示 黑名单 → 检测规则+语义 → 白名单 → 还原 的流程；点节点直接打开名单管理</td>
+</tr>
+<tr>
+<td>「黑名单」卡片</td>
+<td>添加域名或程序 + 命中动作（<strong>命中即拦截</strong> / <strong>强制脱敏</strong>）；优先级最高，白名单也覆盖不了它</td>
+</tr>
+<tr>
+<td>「白名单」卡片</td>
+<td>添加域名或程序；默认完全不拦截；「仍执行脱敏」开关决定是否还做脱敏。程序支持「浏览文件… / 浏览文件夹…」选取</td>
+</tr>
+<tr>
+<td>「导入 / 导出」卡片</td>
+<td>把规则 + 黑白名单打包成 JSON 文件备份，或导入恢复</td>
+</tr>
+<tr>
+<td>「语义检测」卡片</td>
+<td>四个开关：高熵字符串 / 中文姓名 / 机构名 / 地址（命中恒为脱敏）；「产品代号白名单」可避免自家产品名被误伤</td>
+</tr>
+<tr>
+<td>「保险柜」卡片</td>
+<td>① 值条目：登记密钥等具体值（出站即脱敏/拦截）② 路径条目：登记 <code>.env</code>、私钥等文件（支持 <code>*.pem</code> 通配），AI 试图读取就告警</td>
+</tr>
+</tbody>
+</table>
+<blockquote class="shot">
+<p>📷 建议截图：规则中心整页（可分两屏：上半=规则与预设，下半=黑白名单）</p>
+</blockquote>
+<h3 id="54">5.4 防护中心</h3>
+<table>
+<thead>
+<tr>
+<th>控件</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>信号卡片矩阵</td>
+<td>9 个防护信号的开关与累计命中数（报错泄密 / 模型偷换 / 复读篡改 / 流式异常 / 响应夹带 / 记忆残留 / 高危指令等）</td>
+</tr>
+<tr>
+<td>「主动核查」表单</td>
+<td>发起一次核查：验证上游是否存储 / 回显了你的数据，输出风险矩阵报告</td>
+</tr>
+<tr>
+<td>「查看完整报告」</td>
+<td>预览 Markdown 报告，报告文件保存在数据目录</td>
+</tr>
+<tr>
+<td>「清空命中日志 / 清空会话映射」</td>
+<td>一键清理对应数据</td>
+</tr>
+</tbody>
+</table>
+<blockquote class="shot">
+<p>📷 建议截图：防护中心信号卡片矩阵</p>
+</blockquote>
+<h3 id="55">5.5 审计日志页</h3>
+<table>
+<thead>
+<tr>
+<th>控件</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>顶部隐私提示条</td>
+<td>「日志仅记录命中类型与哈希，不保存任何原文」</td>
+</tr>
+<tr>
+<td>「反馈统计」卡片</td>
+<td>近 30 天按<strong>防护点</strong> / 按<strong>规则</strong>两张小表：命中数、误报数、确认数、FP 率——直接回答「哪条规则误报最多」；没有反馈数据时自动隐藏（v0.1.2 起）</td>
+</tr>
+<tr>
+<td>日期筛选器</td>
+<td>只看某一天的记录</td>
+</tr>
+<tr>
+<td>表格：时间 / 域名 / 命中类型 / 动作 / 请求哈希</td>
+<td>历史记录；分页浏览；每行也有「误报 / 确认」反馈按钮（v0.1.2 起）</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>「防护中心」页的安全事件行内同样有「误报 / 确认」按钮——它们参与「按防护点」的统计。</p>
+</blockquote>
+<h3 id="56">5.6 设置页（从上到下）</h3>
+<table>
+<thead>
+<tr>
+<th>分区</th>
+<th>作用与关键项</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>「拦截模式」</td>
+<td>三张卡：<strong>系统代理 + PAC（推荐，默认）</strong> / hosts 模式（实验性）/ TUN 模式（规划中）</td>
+</tr>
+<tr>
+<td>「CA 根证书」</td>
+<td>显示证书状态与路径；按钮：<strong>安装根证书</strong> / 重新检测 / <strong>配置 Node 客户端信任</strong>（用 Node 写的 CLI 工具需要它，详见 FAQ）；下方有风险提示</td>
+</tr>
+<tr>
+<td>「本机安全加固」</td>
+<td>本地代理访问控制（仅接受本机连接）、要求令牌（给 CLI/SDK 用，代理地址 <code>http://令牌@127.0.0.1:8888</code>）、端口占用检测、内存安全擦除、防调试、证书私钥保护、数据目录隔离、启动自检结果</td>
+</tr>
+<tr>
+<td>「桌面通知」</td>
+<td>总开关 + <strong>触发门槛</strong>（默认"高危及以上"，门槛越严越安静）+「发送测试通知」</td>
+</tr>
+<tr>
+<td>「日志清理」</td>
+<td>直通 / 已脱敏 / 已拦截 三类记录分别设保留天数（0 = 永久保存）；「立即清理」「清空全部请求日志」</td>
+</tr>
+<tr>
+<td>「数据安全」</td>
+<td>「退出时清空映射表」开关</td>
+</tr>
+<tr>
+<td>「接管范围」</td>
+<td><strong>自定义接管域名</strong>：使用小众 AI 服务时把它的域名加进来（每行一个），三个接管链路（PAC / hosts / 代理）同步生效</td>
+</tr>
+<tr>
+<td>「关闭窗口」</td>
+<td>点窗口 ✕ 时：<strong>每次询问（默认） / 直接退出程序 / 直接最小化到托盘</strong></td>
+</tr>
+<tr>
+<td>「界面语言」</td>
+<td>简体中文 / English（窗口、托盘、通知一起切换）</td>
+</tr>
+<tr>
+<td>「全局快捷键」</td>
+<td>开关守护（默认 <code>Ctrl+Alt+G</code>）、一键应急切断（默认 <code>Ctrl+Alt+X</code>）；只能从预设键位里选，可整体关闭</td>
+</tr>
+<tr>
+<td>「自动检查更新」</td>
+<td><strong>默认关闭</strong>（关闭时零联网）；开启后仅向 GitHub Releases 发一个查询请求</td>
+</tr>
+<tr>
+<td>「首次运行向导」</td>
+<td>「重新运行」按钮</td>
+</tr>
+<tr>
+<td>「防护边界」</td>
+<td>披露当前守护不到的场景（证书固定、QUIC 等），建议读一遍</td>
+</tr>
+</tbody>
+</table>
+<blockquote class="shot">
+<p>📷 建议截图：设置页整页（可分两屏）</p>
+</blockquote>
+<h3 id="57">5.7 系统托盘菜单（任务栏右下角盾牌图标）</h3>
+<table>
+<thead>
+<tr>
+<th>菜单项</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>「状态：守护中 / 未开启」</td>
+<td>当前状态（灰色不可点）</td>
+</tr>
+<tr>
+<td>「暂停守护 / 开启守护」</td>
+<td>快速开关（随状态变化）</td>
+</tr>
+<tr>
+<td>「显示主窗口」</td>
+<td>打开主界面（左键单击图标同效）</td>
+</tr>
+<tr>
+<td>「最近事件」</td>
+<td>最近 6 条安全事件（信号名 + 严重度 + 域名 + 时间），不含原文</td>
+</tr>
+<tr>
+<td>「退出」</td>
+<td>安全退出：先关闭守护、还原系统代理，再退出程序</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_7">六、进阶功能</h2>
+<h3 id="61">6.1 三档防护预设怎么选？</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>开启的规则</th>
+<th>命中后动作</th>
+<th>适合谁</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>保守</strong></td>
+<td>身份证 / 银行卡 / API 密钥</td>
+<td>脱敏</td>
+<td>怕误报打扰、只关心核心证件与密钥的人</td>
+</tr>
+<tr>
+<td><strong>均衡</strong>（默认）</td>
+<td>身份证 / 手机号 / 银行卡 / 邮箱 / API 密钥（IP 关闭）</td>
+<td>脱敏</td>
+<td>大多数人</td>
+</tr>
+<tr>
+<td><strong>激进</strong></td>
+<td>全部 6 类</td>
+<td>身份证 / 银行卡 / API 密钥改为<strong>拦截</strong></td>
+<td>处理高敏感数据、宁可错杀不可放过</td>
+</tr>
+</tbody>
+</table>
+<p>切换位置：规则中心 →「内置规则预设」卡片。</p>
+<h3 id="62-ai">6.2 使用小众 AI 服务时（自定义接管域名）</h3>
+<p>内置域名清单之外的服务默认不走守护。解决办法：</p>
+<ol>
+<li>设置 → 「接管范围」。</li>
+<li>在输入框里填该服务的域名，<strong>每行一个</strong>（填对话网页和 API 域名都可以）。</li>
+<li>保存后 PAC / hosts / 代理三条链路同步更新，该域名立即进入守护。</li>
+</ol>
+<h3 id="63">6.3 保险柜：保护你的密钥和文件</h3>
+<ul>
+<li><strong>值条目</strong>：登记具体密钥（如 <code>OPENAI_API_KEY = sk-xxx</code>）。此后只要出站流量里出现这个值，自动脱敏或拦截；若 AI 的回复里试图让你执行读取这类密钥的命令，会触发「保险柜访问」告警。</li>
+<li><strong>路径条目</strong>：登记文件路径或通配模式（如 <code>.env</code>、<code>*.pem</code>）。有程序试图读取这些受保护对象时立即告警。</li>
+<li><strong>用完即改提醒（v0.1.2 起）</strong>：登记的密钥被 AI <strong>实际用到</strong>时（不是提到名字，是真的发送了这个值），首页横幅自动提醒——
+<ul>
+<li><strong>绿色</strong>：密钥已被换成代号再发出去，AI 拿到的是假值。如果模型因此"调用失败"，属正常现象，无需处理；</li>
+<li><strong>红色</strong>：你把该域名加入了白名单、密钥以明文发出去了——<strong>建议立即到对应平台重置（轮换）这把密钥</strong>，然后在保险柜里更新条目。窗口不在前台时这条提醒会走系统通知。</li>
+<li>同一条目 10 分钟内只提醒一次，不刷屏；提醒里只有条目名字和次数，<strong>永远不含密钥值本身</strong>。</li>
+</ul>
+</li>
+<li>条目即存即生效，最多 200 条，值至少 8 个字符。</li>
+</ul>
+<h3 id="64-nodejs">6.4 命令行 / Node.js 用户须知</h3>
+<ul>
+<li>一般 CLI 工具：设置环境变量 <code>http_proxy=http://127.0.0.1:8888</code> 与 <code>https_proxy=http://127.0.0.1:8888</code> 即可让流量进守护。</li>
+<li><strong>Node.js 系工具</strong>（npm、各类 AI CLI）不认系统证书：设置页点「<strong>配置 Node 客户端信任</strong>」一键写入 <code>NODE_EXTRA_CA_CERTS</code>（仅 Windows 支持一键，其他系统按界面提示手动设置），然后<strong>完全重启</strong>对应客户端。</li>
+</ul>
+<h3 id="65">6.5 应急切断：什么时候用、会发生什么</h3>
+<p>怀疑数据已经泄露、或想把所有痕迹立刻清掉时使用。动作：清空本机占位符映射 → 关闭守护 → 撤销根证书。注意：切断后，之前会话的 AI 回复里若还残留占位符，将无法再还原。</p>
+<hr />
+<h2 id="_8">七、查看与导出结果</h2>
+<table>
+<thead>
+<tr>
+<th>你想要</th>
+<th>当前版本怎么做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>查看某次请求的命中情况</td>
+<td>「请求」页 → 筛选 → 点行看详情弹窗</td>
+</tr>
+<tr>
+<td>回顾历史事件</td>
+<td>「审计」页 → 日期筛选</td>
+</tr>
+<tr>
+<td>验证上游是否存储数据</td>
+<td>「防护」页 → 发起主动核查 → 查看风险矩阵报告</td>
+</tr>
+<tr>
+<td>备份 / 迁移规则配置</td>
+<td>规则中心 → 「导入 / 导出」→ 导出 JSON 规则包（含规则 + 黑白名单，<strong>不含任何流量数据</strong>）；换电脑时导入即可</td>
+</tr>
+<tr>
+<td>导出请求 / 审计记录为表格</td>
+<td><strong>暂未支持</strong>（已列入开发计划）；当前可在界面查看</td>
+</tr>
+</tbody>
+</table>
+<p>数据都存在本机一个加密保护的目录里：</p>
+<table>
+<thead>
+<tr>
+<th>平台</th>
+<th>位置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows</td>
+<td><code>C:\Users\你的用户名\AppData\Roaming\com.technicalflight.aiguard\</code></td>
+</tr>
+<tr>
+<td>macOS</td>
+<td><code>~/Library/Application Support/com.technicalflight.aiguard/</code></td>
+</tr>
+<tr>
+<td>Linux</td>
+<td><code>~/.local/share/com.technicalflight.aiguard/</code></td>
+</tr>
+</tbody>
+</table>
+<p>目录里主要是：<code>aiguard.db</code>（配置与日志数据库）、<code>ca.cer</code>（根证书）、<code>ca.key</code>（私钥，Windows 下经系统 DPAPI 加密）。<strong>请勿把 <code>ca.key</code> 提供给任何人。</strong></p>
+<hr />
+<h2 id="faq">八、常见问题（FAQ）</h2>
+<h3 id="81">8.1 网络与访问类</h3>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>原因</th>
+<th>解决办法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>开启守护后，某个 AI 网页打不开 / 一直转圈</td>
+<td>该域名不在守护清单内但被代理环境干扰，或证书未装好</td>
+<td>① 确认已安装根证书（设置 → CA 根证书 → 重新检测）② 临时暂停守护对比 ③ 若用的是小众 AI 服务，把它加进「接管范围」</td>
+</tr>
+<tr>
+<td>AI 网页报"证书错误 / 不安全"</td>
+<td>根证书未安装成功，或装错了用户</td>
+<td>设置 → CA 根证书 → 「安装根证书」重装；确认当前登录的就是安装时的用户</td>
+</tr>
+<tr>
+<td>桌面 AI 客户端不走守护</td>
+<td>客户端未跟随系统代理</td>
+<td>在客户端的网络设置里手动填代理 <code>127.0.0.1:8888</code>；Node 系客户端先点「配置 Node 客户端信任」再完全重启</td>
+</tr>
+<tr>
+<td>某些浏览器插件 / 其他代理软件冲突</td>
+<td>多个代理抢系统代理设置</td>
+<td>二选一：关闭其他代理软件，或在其内部把上游代理指向 <code>127.0.0.1:8888</code></td>
+</tr>
+<tr>
+<td>退出软件后网络异常（极少见）</td>
+<td>进程被强制结束，代理设置没来得及还原</td>
+<td>系统设置里手动关闭代理：Windows「设置 → 网络和 Internet → 代理」关闭"使用设置脚本"；以后尽量用托盘「退出」</td>
+</tr>
+</tbody>
+</table>
+<h3 id="82">8.2 守护效果类</h3>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>原因</th>
+<th>解决办法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AI 回复里出现 <code>[[PII:...]]</code> 没被还原</td>
+<td>该会话映射已被切断 / 超时（默认 30 分钟无活动）/ 跨了会话</td>
+<td>把这个问题重新问一遍（新会话会建立新映射）；应急切断或「清空会话映射」后旧占位符无法还原，属正常</td>
+</tr>
+<tr>
+<td>提示"已拦截"，AI 根本没收到消息</td>
+<td>命中了动作=拦截的规则（激进预设下身份证 / 银行卡 / 密钥必拦截），或命中了黑名单</td>
+<td>若确认要发送：规则中心把该规则动作改为「脱敏」，或把该域名 / 程序加入白名单</td>
+</tr>
+<tr>
+<td>明明粘贴了敏感信息却没有任何记录</td>
+<td>该域名不在守护范围（先确认是主流 AI 服务），或对应规则被关了</td>
+<td>检查规则中心规则开关；小众服务加「接管范围」</td>
+</tr>
+<tr>
+<td>误报太多（正常内容被脱敏）</td>
+<td>规则太严格</td>
+<td>① 预设切到「保守 / 均衡」② 用「正则测试器」调整规则 ③ 把可信域名 / 程序加入白名单 ④ 语义检测里关闭部分开关或把产品名加进白名单 ⑤ 在「请求 / 审计」页点「误报」反馈，「反馈统计」会直接指出误报最多的规则（v0.1.2 起）</td>
+</tr>
+<tr>
+<td>漏报（没识别出某种敏感信息）</td>
+<td>内置 6 类规则覆盖不了所有格式</td>
+<td>规则中心 → 新增自定义规则（写一条正则）；或把值登记进保险柜（精确匹配，绝不漏）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="83">8.3 通知与账号类</h3>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>原因</th>
+<th>解决办法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>明明拦截了却没弹通知</td>
+<td>主窗口在前台时不弹（有意设计）；或事件没到通知门槛</td>
+<td>设置 → 桌面通知 → 降低「触发门槛」；先点「发送测试通知」验证系统权限</td>
+</tr>
+<tr>
+<td>托盘「最近事件」一直是"暂无安全事件"</td>
+<td>没有发生达到记录门槛的事件</td>
+<td>正常现象，不代表守护没工作</td>
+</tr>
+<tr>
+<td>「保险柜访问」告警是什么</td>
+<td>有程序 / AI 回复试图读取你在保险柜登记的密钥或文件</td>
+<td>在「防护」页查看详情；若是你自己的正常操作，忽略即可</td>
+</tr>
+<tr>
+<td>首页出现红色「凭据已外发」横幅（v0.1.2 起）</td>
+<td>该流量命中了你的白名单直通放行，且正文里有保险柜登记的密钥值——已明文发给 AI 服务商</td>
+<td>尽快到对应平台重置该密钥，然后回保险柜更新条目值；若属误登记，从保险柜删除该条目</td>
+</tr>
+<tr>
+<td>明明用了密钥却没提醒（v0.1.2 起）</td>
+<td>同一条目 10 分钟内只提醒一次（冷却设计）；或该密钥还没登记进保险柜</td>
+<td>把密钥值登记进保险柜「值条目」；刚提醒过就稍等片刻</td>
+</tr>
+<tr>
+<td>界面变成英文了</td>
+<td>语言被切换</td>
+<td>设置 → 界面语言 → 简体中文</td>
+</tr>
+</tbody>
+</table>
+<h3 id="84">8.4 安装与卸载类</h3>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>原因</th>
+<th>解决办法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows 提示"已保护你的电脑"</td>
+<td>安装包无商业签名</td>
+<td>「更多信息」→「仍要运行」</td>
+</tr>
+<tr>
+<td>端口 8888 / 8889 被占用提示</td>
+<td>其他软件占了这两个本地端口</td>
+<td>按提示关闭占用程序后点「重新检测」</td>
+</tr>
+<tr>
+<td>怎么彻底卸载</td>
+<td>—</td>
+<td>① 托盘「退出」安全退出（还原代理）② 设置 → CA 根证书 → 撤销证书 ③ 卸载程序 ④ 手动删除上文数据目录</td>
+</tr>
+<tr>
+<td>升级到新版本要重装证书吗</td>
+<td>一般不用</td>
+<td>数据目录独立于程序，覆盖安装即可；若提示证书状态异常再重装</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_9">九、易错点速查表</h2>
+<table>
+<thead>
+<tr>
+<th>❌ 易错点</th>
+<th>✅ 正确做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>用任务管理器强杀进程退出</td>
+<td>用托盘「退出」，会自动还原系统代理</td>
+</tr>
+<tr>
+<td>把 <code>ca.key</code> 私钥文件发给别人</td>
+<td>私钥仅本机使用，绝不外传</td>
+</tr>
+<tr>
+<td>期待占位符在所有会话间通用</td>
+<td>占位符只在同一会话内一致，跨会话 / 清空后不可还原（安全设计）</td>
+</tr>
+<tr>
+<td>在前台等通知</td>
+<td>前台不弹通知（设计如此），去托盘「最近事件」或「审计」页看</td>
+</tr>
+<tr>
+<td>以为软件会上传数据</td>
+<td>所有检测在本机完成；自动更新默认关闭；日志无原文</td>
+</tr>
+<tr>
+<td>黑白名单顺序记反</td>
+<td>优先级：黑名单（强制执行）＞ 白名单（放行/脱敏可选）＞ 检测规则</td>
+</tr>
+<tr>
+<td>用了小众 AI 服务不生效就放弃</td>
+<td>设置 →「接管范围」加上域名即可</td>
+</tr>
+<tr>
+<td>Node CLI 不认证书就关守护</td>
+<td>点「配置 Node 客户端信任」并完全重启该 CLI</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_10">十、隐私与安全设计（为什么可以放心用）</h2>
+<ol>
+<li><strong>原文不落盘</strong>：日志与审计只存"命中类型 + 哈希指纹"，任何环节不保存敏感原文。你点的「误报 / 确认」也只存一个标签词和时间，不带任何内容（v0.1.2 起）。</li>
+<li><strong>原文不出网</strong>：脱敏、还原、审计全部在本机完成；软件不把你的数据发给任何第三方。</li>
+<li><strong>内存即用即毁</strong>：原文↔占位符映射只在本机内存，会话结束 / 超时自动用零覆写销毁。</li>
+<li><strong>私钥加密保存</strong>：证书私钥在 Windows 上经系统级加密（DPAPI），只有你的登录用户能解密。</li>
+<li><strong>自我加固</strong>：端口仅监听本机回环、可选访问令牌、启动自检、防调试检测。</li>
+<li><strong>默认不联网</strong>：自动更新默认关闭，关闭期间零网络请求。</li>
+</ol>
+<hr />
+<p><em>本手册基于 v0.1.1 源码与实际界面预览编写；软件处于快速迭代期，个别界面细节可能随版本变化，以实际界面为准。</em></p></article>
+  <div class="foot">AiGuard · AGPL-3.0 开源 · 本手册基于 v0.1.1 源码与实际界面预览编写</div>
+</div>
+</body>
+</html>
