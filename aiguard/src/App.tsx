@@ -4452,6 +4452,43 @@ function SettingsPage({
         </HardenLine>
       </div>
 
+      <div className="section-title">{t("防护边界")}</div>
+      <div className="card card-pad">
+        <div className="muted" style={{ marginTop: 4 }}>
+          {t("以下是本产品已知的原理性盲区。「没有报告」不等于「安全」。")}
+        </div>
+        <HardenLine
+          tone="amber"
+          title={t("CLI 直连 MCP 不经代理")}
+          desc={t("本地 CLI 直连 MCP 服务的流量不经过本代理，防护完全看不到，也无法脱敏。")}
+        />
+        <HardenLine
+          tone="amber"
+          title={t("内网 IP 直连不经透明层")}
+          desc={t("按 IP 直连的内网请求没有 SNI，透明层无从识别；需显式配置 http_proxy 指向本代理才能接管。")}
+        />
+        <HardenLine
+          tone="green"
+          title={t("证书私钥的系统能力边界")}
+          desc={t("Windows 上 CA 私钥由 CNG 生成、不可导出，因此无法导入系统证书存储；当前以 DPAPI 加密落盘保护，仅当前登录用户可解密。")}
+        />
+        <HardenLine
+          tone="amber"
+          title={t("记忆残留需主动核查")}
+          desc={t("被动流量只见单次请求，看不到跨请求行为；记忆残留只能靠主动核查发现。")}
+        />
+        <HardenLine
+          tone="amber"
+          title={t("语义层判不准时宁可漏报")}
+          desc={t("语义层判不准的按无风险放行（保守取向，避免误报），因此没有发现不等于没有风险。")}
+        />
+        <HardenLine
+          tone="amber"
+          title={t("更优用法：密钥以变量名引用")}
+          desc={t("让模型在代码里引用变量名（如 process.env.GH_TOKEN），真实值留在本地运行时注入——密钥根本不进对话，从源头避免「脱敏则不可用」的两难。")}
+        />
+      </div>
+
       <div style={{ marginTop: 22, paddingBottom: 16 }}>
         {guardEnabled ? (
           <button className="btn" onClick={onToggleGuard}>
