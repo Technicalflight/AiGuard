@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>工作原理 — AI 安全卫士</title>
+  <meta name="description" content="AI 安全卫士的工作原理：请求出站时检测脱敏，响应回程时流式还原，全程只读审计。一次请求的三段旅程，在本页讲清楚。">
+  <link rel="canonical" href="https://technicalflight.github.io/AiGuard/how-it-works.html">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="工作原理 — AI 安全卫士">
+  <meta property="og:description" content="请求出站时检测脱敏，响应回程时流式还原，全程只读审计。">
+  <meta property="og:url" content="https://technicalflight.github.io/AiGuard/how-it-works.html">
+  <meta name="theme-color" content="#0F1714">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header class="nav">
+    <div class="nav__inner">
+      <div class="nav__left">
+        <a class="nav__brand" href="index.html" aria-label="AI 安全卫士 首页">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2L20 5V11C20 16 16.5 20.4 12 22C7.5 20.4 4 16 4 11V5L12 2Z" fill="#0E8A5F"/><path d="M8.5 11.5L11 14L15.5 9.5" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>AI 安全卫士</span>
+        </a>
+        <nav class="nav__links" aria-label="主导航">
+          <a href="how-it-works.html" aria-current="page">工作原理</a>
+          <a href="signals.html">防护信号</a>
+          <a href="features.html">能力</a>
+          <a href="privacy.html">隐私</a>
+          <a href="download.html">下载</a>
+          <a href="changelog.html">更新日志</a>
+        </nav>
+      </div>
+      <div class="nav__right">
+        <a class="btn btn--primary btn--sm" href="download.html">免费下载</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- 页头 -->
+    <section class="page-hero">
+      <div class="container">
+        <p class="breadcrumb"><a href="index.html">首页</a> · 工作原理</p>
+        <h1>工作原理</h1>
+        <p class="page-hero__sub">一次请求的三段旅程：脱敏出站、守护检测、明文还原。</p>
+      </div>
+    </section>
+
+    <!-- 痛点 -->
+    <section class="section section--parchment">
+      <div class="container">
+        <div class="section__head">
+          <h2>AI 用得越多，泄密面越大</h2>
+          <p>每一次粘贴进对话框的数据，都会离开你的电脑。</p>
+        </div>
+        <div class="grid grid--3">
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="8" cy="14" r="4" stroke="#0E8A5F" stroke-width="1.8"/><path d="M11 11L20 2M15 7L18 10" stroke="#0E8A5F" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>粘贴即泄漏</h3>
+            <p>密钥、客户资料、代码片段，粘进对话框的一刻就已离开本机。</p>
+          </article>
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3L22 20H2L12 3Z" stroke="#0E8A5F" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 10V14M12 16.5V17.5" stroke="#0E8A5F" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>响应夹带</h3>
+            <p>提示注入与夹带指令藏在 AI 回复里，肉眼难辨、事后难查。</p>
+          </article>
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" stroke="#0E8A5F" stroke-width="1.8"/><path d="M7 9L10 12L7 15M12 15H17" stroke="#0E8A5F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <h3>本地直连无防护</h3>
+            <p>CLI、IDE 与 MCP 工具直连模型，网页端的防护管不到它们。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 三步接入 -->
+    <section class="section section--dark">
+      <div class="container">
+        <div class="section__head">
+          <h2>三步接入，全程无感</h2>
+          <p>系统代理一键开启，受支持的 AI 域名自动进入守护范围。</p>
+        </div>
+        <div class="grid grid--3">
+          <article class="card card--dark">
+            <span class="card__num">01</span>
+            <h3>请求出站 · 检测脱敏</h3>
+            <p>出站请求中的敏感信息被替换为会话内占位符，原始数据不再离开本机。</p>
+          </article>
+          <article class="card card--dark">
+            <span class="card__num">02</span>
+            <h3>响应回程 · 流式还原</h3>
+            <p>AI 返回的占位符在流式传输中实时换回原值，回答质量不受影响。</p>
+          </article>
+          <article class="card card--dark">
+            <span class="card__num">03</span>
+            <h3>全程审计 · 只读告警</h3>
+            <p>九类风险信号实时检测，只告警不改动，证据不含原文。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 链路说明 -->
+    <section class="section">
+      <div class="container">
+        <div class="section__head">
+          <h2>脱敏与还原的完整链路</h2>
+          <p>你的应用与 AI 服务之间的每一跳，卫士都在中间看得见。</p>
+        </div>
+        <div class="flow" role="img" aria-label="流程示意：你的应用发出请求，经 AI 安全卫士脱敏后到达 AI 服务；AI 响应经卫士还原后回到你的应用">
+          <div class="flow__card">
+            <svg class="icon icon--lg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2" stroke="#1D1D1F" stroke-width="1.8"/><path d="M9 20H15M12 16V20" stroke="#1D1D1F" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>你的应用</h3>
+            <p>浏览器 / IDE / CLI 工具</p>
+          </div>
+          <div class="flow__arrow">
+            <svg viewBox="0 0 44 20" fill="none" aria-hidden="true"><path d="M2 10H40M40 10L32 3M40 10L32 17" stroke="#0E8A5F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>脱敏出站</span>
+          </div>
+          <div class="flow__card flow__card--guard">
+            <svg class="icon icon--lg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2L20 5V11C20 16 16.5 20.4 12 22C7.5 20.4 4 16 4 11V5L12 2Z" fill="#35C28C"/><path d="M8.5 11.5L11 14L15.5 9.5" stroke="#0F1714" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <h3>AI 安全卫士</h3>
+            <div class="flow__chips">
+              <span class="chip">请求 · 实时脱敏</span>
+              <span class="chip">响应 · 流式还原</span>
+            </div>
+            <p>敏感值被会话内占位符替换，回程自动换回</p>
+          </div>
+          <div class="flow__arrow">
+            <svg viewBox="0 0 44 20" fill="none" aria-hidden="true"><path d="M2 10H40M40 10L32 3M40 10L32 17" stroke="#0E8A5F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>还原回程</span>
+          </div>
+          <div class="flow__card">
+            <svg class="icon icon--lg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 18C4.8 18 3 16.2 3 14C3 12 4.5 10.4 6.4 10.1C6.9 7.2 9.4 5 12.5 5C15.8 5 18.5 7.7 18.5 11C20.4 11.3 22 12.9 22 14.9C22 16.6 20.6 18 18.9 18H7Z" stroke="#1D1D1F" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            <h3>AI 服务</h3>
+            <p>ChatGPT / Claude / 内网模型</p>
+          </div>
+        </div>
+        <p class="section__note">支持哪些服务、如何处理压缩与二进制内容，见 <a class="inline-link" href="faq.html">常见问题</a>。</p>
+      </div>
+    </section>
+
+    <!-- 底部 CTA -->
+    <section class="cta">
+      <div class="container">
+        <h2>今天就装上，明天才安心</h2>
+        <p>下载安装、一键开启系统代理，剩下的事交给 AI 安全卫士。</p>
+        <div class="hero__cta">
+          <a class="btn btn--primary" href="download.html">免费下载 v0.1.2</a>
+          <a class="btn btn--ghost-dark" href="signals.html">看看九大防护信号</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer__top">
+        <div class="footer__brand">
+          <a class="nav__brand nav__brand--dark" href="index.html">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2L20 5V11C20 16 16.5 20.4 12 22C7.5 20.4 4 16 4 11V5L12 2Z" fill="#0E8A5F"/><path d="M8.5 11.5L11 14L15.5 9.5" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>AI 安全卫士</span>
+          </a>
+          <p>本机运行的 AI 流量防护代理</p>
+        </div>
+        <nav class="footer__col" aria-label="页面">
+          <h3>页面</h3>
+          <a href="how-it-works.html">工作原理</a>
+          <a href="signals.html">防护信号</a>
+          <a href="features.html">能力与规则</a>
+          <a href="privacy.html">隐私承诺</a>
+          <a href="faq.html">常见问题</a>
+        </nav>
+        <nav class="footer__col" aria-label="产品">
+          <h3>产品</h3>
+          <a href="download.html">下载 v0.1.2</a>
+          <a href="changelog.html">更新日志</a>
+          <a href="https://github.com/Technicalflight/AiGuard/releases" target="_blank" rel="noopener">GitHub Releases</a>
+        </nav>
+        <nav class="footer__col" aria-label="资源">
+          <h3>资源</h3>
+          <a href="https://github.com/Technicalflight/AiGuard" target="_blank" rel="noopener">GitHub 仓库</a>
+          <a href="https://github.com/Technicalflight/AiGuard/issues" target="_blank" rel="noopener">问题反馈</a>
+          <a href="https://github.com/Technicalflight/AiGuard/blob/main/LICENSE" target="_blank" rel="noopener">AGPL-3.0 协议</a>
+        </nav>
+      </div>
+      <div class="footer__bar">
+        <span>Copyright 2026 AI 安全卫士 · AGPL-3.0 开源</span>
+        <span>Built by <a href="https://github.com/Technicalflight" target="_blank" rel="noopener">Technicalflight</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

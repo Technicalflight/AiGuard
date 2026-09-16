@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>更新日志 — AI 安全卫士</title>
+  <meta name="description" content="AI 安全卫士更新日志：v0.1.2 新增命中反馈闭环、凭据轮换提醒与拦截确认闸门；v0.1.1 新增保险柜、自定义接管域名、工具注入信号、语义检测层与规则中心工具箱；v0.1.0 首个公开版本。完整发布说明见 GitHub Releases。">
+  <link rel="canonical" href="https://technicalflight.github.io/AiGuard/changelog.html">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="更新日志 — AI 安全卫士">
+  <meta property="og:description" content="每个版本发布了什么、改了什么，在这里如实记录。">
+  <meta property="og:url" content="https://technicalflight.github.io/AiGuard/changelog.html">
+  <meta name="theme-color" content="#0F1714">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header class="nav">
+    <div class="nav__inner">
+      <div class="nav__left">
+        <a class="nav__brand" href="index.html" aria-label="AI 安全卫士 首页">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2L20 5V11C20 16 16.5 20.4 12 22C7.5 20.4 4 16 4 11V5L12 2Z" fill="#0E8A5F"/><path d="M8.5 11.5L11 14L15.5 9.5" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>AI 安全卫士</span>
+        </a>
+        <nav class="nav__links" aria-label="主导航">
+          <a href="how-it-works.html">工作原理</a>
+          <a href="signals.html">防护信号</a>
+          <a href="features.html">能力</a>
+          <a href="privacy.html">隐私</a>
+          <a href="download.html">下载</a>
+          <a href="changelog.html" aria-current="page">更新日志</a>
+        </nav>
+      </div>
+      <div class="nav__right">
+        <a class="btn btn--primary btn--sm" href="download.html">免费下载</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- 页头 -->
+    <section class="page-hero">
+      <div class="container">
+        <p class="breadcrumb"><a href="index.html">首页</a> · 更新日志</p>
+        <h1>更新日志</h1>
+        <p class="page-hero__sub">每个版本发布了什么、改了什么，在这里如实记录。</p>
+      </div>
+    </section>
+
+    <!-- 时间线 -->
+    <section class="section section--parchment">
+      <div class="container container--narrow">
+        <div class="timeline">
+
+          <article class="release">
+            <div class="release__head">
+              <span class="release__ver">v0.1.2</span>
+              <span class="release__latest">最新</span>
+              <span class="release__date">2026-09-17</span>
+            </div>
+            <h2>拦截更稳，反馈闭环</h2>
+            <ul>
+              <li>新增命中反馈闭环：误报 / 确认一键打标，防护中心汇总反馈统计</li>
+              <li>新增凭据轮换提醒：保险柜凭据用完即改，横幅 + 系统通知双通道（不记录密钥值）</li>
+              <li>新增拦截确认闸门：Block 需达到设定确认次数，未达标自动降为脱敏，防误伤</li>
+              <li>设置页新增「防护边界」：原理性盲区如实披露</li>
+              <li>内部质量：核心检测性能基准与 CI p99 门禁，i18n 自检递归化</li>
+            </ul>
+            <a class="release__link" href="https://github.com/Technicalflight/AiGuard/releases/tag/v0.1.2" target="_blank" rel="noopener">查看 v0.1.2 Release<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6L15 12L9 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+          </article>
+
+          <article class="release">
+            <div class="release__head">
+              <span class="release__ver">v0.1.1</span>
+              <span class="release__date">2026-09-15</span>
+            </div>
+            <h2>守护能力全面升级</h2>
+            <ul>
+              <li>新增保险柜：录入敏感值后出站精确匹配，可脱敏或直接拦截</li>
+              <li>新增自定义接管域名：中转 / 自建网关纳入守护范围</li>
+              <li>新增工具注入信号：MCP 工具结果中的间接指令告警</li>
+              <li>新增语义检测层：熵值 / 姓名 / 地址三级启发式流水线</li>
+              <li>新增规则中心工具箱：正则测试器、规则包导入导出、三档预设</li>
+              <li>新增主窗关闭询问：退出 / 托盘 / 记住选择</li>
+            </ul>
+            <a class="release__link" href="https://github.com/Technicalflight/AiGuard/releases/tag/v0.1.1" target="_blank" rel="noopener">查看 v0.1.1 Release<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6L15 12L9 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+          </article>
+
+          <article class="release">
+            <div class="release__head">
+              <span class="release__ver">v0.1.0</span>
+              <span class="release__date">2026-09-15</span>
+            </div>
+            <h2>首个公开版本</h2>
+            <ul>
+              <li>本机 MITM 反向代理：系统代理 + PAC 只接管 AI 域名</li>
+              <li>请求侧脱敏：身份证 / 手机号 / 银行卡 / 邮箱 / API Key / IP 六类规则</li>
+              <li>响应侧 SSE 流式还原，前瞻缓冲处理被拆分的占位符</li>
+              <li>首发七大防护信号（后续版本扩展至九大）</li>
+              <li>黑白名单、首次运行向导、中英双语界面</li>
+            </ul>
+            <a class="release__link" href="https://github.com/Technicalflight/AiGuard/releases/tag/v0.1.0" target="_blank" rel="noopener">查看 v0.1.0 Release<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6L15 12L9 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+          </article>
+
+          <a class="release__link release__link--all" href="https://github.com/Technicalflight/AiGuard/releases" target="_blank" rel="noopener">完整发布说明见 GitHub Releases<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6L15 12L9 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- 底部 CTA -->
+    <section class="cta">
+      <div class="container">
+        <h2>今天就装上，明天才安心</h2>
+        <p>下载安装、一键开启系统代理，剩下的事交给 AI 安全卫士。</p>
+        <div class="hero__cta">
+          <a class="btn btn--primary" href="download.html">免费下载 v0.1.2</a>
+          <a class="btn btn--ghost-dark" href="https://github.com/Technicalflight/AiGuard" target="_blank" rel="noopener">查看 GitHub 源码</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer__top">
+        <div class="footer__brand">
+          <a class="nav__brand nav__brand--dark" href="index.html">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2L20 5V11C20 16 16.5 20.4 12 22C7.5 20.4 4 16 4 11V5L12 2Z" fill="#0E8A5F"/><path d="M8.5 11.5L11 14L15.5 9.5" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>AI 安全卫士</span>
+          </a>
+          <p>本机运行的 AI 流量防护代理</p>
+        </div>
+        <nav class="footer__col" aria-label="页面">
+          <h3>页面</h3>
+          <a href="how-it-works.html">工作原理</a>
+          <a href="signals.html">防护信号</a>
+          <a href="features.html">能力与规则</a>
+          <a href="privacy.html">隐私承诺</a>
+          <a href="faq.html">常见问题</a>
+        </nav>
+        <nav class="footer__col" aria-label="产品">
+          <h3>产品</h3>
+          <a href="download.html">下载 v0.1.2</a>
+          <a href="changelog.html">更新日志</a>
+          <a href="https://github.com/Technicalflight/AiGuard/releases" target="_blank" rel="noopener">GitHub Releases</a>
+        </nav>
+        <nav class="footer__col" aria-label="资源">
+          <h3>资源</h3>
+          <a href="https://github.com/Technicalflight/AiGuard" target="_blank" rel="noopener">GitHub 仓库</a>
+          <a href="https://github.com/Technicalflight/AiGuard/issues" target="_blank" rel="noopener">问题反馈</a>
+          <a href="https://github.com/Technicalflight/AiGuard/blob/main/LICENSE" target="_blank" rel="noopener">AGPL-3.0 协议</a>
+        </nav>
+      </div>
+      <div class="footer__bar">
+        <span>Copyright 2026 AI 安全卫士 · AGPL-3.0 开源</span>
+        <span>Built by <a href="https://github.com/Technicalflight" target="_blank" rel="noopener">Technicalflight</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

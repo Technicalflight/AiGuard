@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>九大防护信号 — AI 安全卫士</title>
+  <meta name="description" content="AI 安全卫士实时盯守 9 类风险：报错泄密、模型偷换、复读篡改、流式异常、响应夹带、记忆残留、高危指令、工具注入、保险柜访问。每类信号可独立开关，命中即告警。">
+  <link rel="canonical" href="https://technicalflight.github.io/AiGuard/signals.html">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="九大防护信号 — AI 安全卫士">
+  <meta property="og:description" content="从报错泄密到工具注入，每一类风险都看得见、查得到。">
+  <meta property="og:url" content="https://technicalflight.github.io/AiGuard/signals.html">
+  <meta name="theme-color" content="#0F1714">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header class="nav">
+    <div class="nav__inner">
+      <div class="nav__left">
+        <a class="nav__brand" href="index.html" aria-label="AI 安全卫士 首页">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2L20 5V11C20 16 16.5 20.4 12 22C7.5 20.4 4 16 4 11V5L12 2Z" fill="#0E8A5F"/><path d="M8.5 11.5L11 14L15.5 9.5" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>AI 安全卫士</span>
+        </a>
+        <nav class="nav__links" aria-label="主导航">
+          <a href="how-it-works.html">工作原理</a>
+          <a href="signals.html" aria-current="page">防护信号</a>
+          <a href="features.html">能力</a>
+          <a href="privacy.html">隐私</a>
+          <a href="download.html">下载</a>
+          <a href="changelog.html">更新日志</a>
+        </nav>
+      </div>
+      <div class="nav__right">
+        <a class="btn btn--primary btn--sm" href="download.html">免费下载</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- 页头 -->
+    <section class="page-hero">
+      <div class="container">
+        <p class="breadcrumb"><a href="index.html">首页</a> · 防护信号</p>
+        <h1>九大防护信号</h1>
+        <p class="page-hero__sub">从报错泄密到工具注入，每一类风险都看得见、查得到。</p>
+      </div>
+    </section>
+
+    <!-- 信号网格 -->
+    <section class="section section--parchment">
+      <div class="container">
+        <div class="section__head">
+          <h2>9 类风险，实时在盯</h2>
+          <p>每类信号可独立开关，命中即告警，全程可追溯。</p>
+        </div>
+        <div class="grid grid--3">
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="#0E8A5F" stroke-width="1.8"/><path d="M12 8V13M12 16V16.5" stroke="#0E8A5F" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>报错泄密</h3><p>报错信息中的路径、密钥片段与内部地址，逐条识别告警。</p>
+          </article>
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 11A8 8 0 006.5 7M4 13A8 8 0 0017.5 17" stroke="#0E8A5F" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 3.5V7H10M17.5 20.5V17H14" stroke="#0E8A5F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <h3>模型偷换</h3><p>上游模型被静默更换时立即提醒，防止答案被偷偷换轨。</p>
+          </article>
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2" stroke="#0E8A5F" stroke-width="1.8"/><path d="M9 8H15M9 12H15M9 16H12" stroke="#0E8A5F" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>复读篡改</h3><p>AI 对工具结果的复述逐字比对，被篡改即告警。</p>
+          </article>
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 12H7L10 5L14 19L17 12H21" stroke="#0E8A5F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <h3>流式异常</h3><p>SSE 流式响应的中断、结构与节奏异常，实时捕获。</p>
+          </article>
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3L21 8V16L12 21L3 16V8L12 3Z" stroke="#0E8A5F" stroke-width="1.8" stroke-linejoin="round"/><path d="M3 8L12 13L21 8M12 13V21" stroke="#0E8A5F" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            <h3>响应夹带</h3><p>回复中夹带的可疑指令与提示注入，标记并留痕。</p>
+          </article>
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3" stroke="#0E8A5F" stroke-width="1.8"/><path d="M4 5V19C4 20.7 7.6 22 12 22C16.4 22 20 20.7 20 19V5M4 12C4 13.7 7.6 15 12 15C16.4 15 20 13.7 20 12" stroke="#0E8A5F" stroke-width="1.8"/></svg>
+            <h3>记忆残留</h3><p>跨请求记忆把敏感信息带进新会话，一查便知。</p>
+          </article>
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2L20 5V11C20 16 16.5 20.4 12 22C7.5 20.4 4 16 4 11V5L12 2Z" stroke="#0E8A5F" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 8V13M12 15.5V16.5" stroke="#0E8A5F" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>高危指令</h3><p>模型下发删除、提权等高危系统命令时即时告警。</p>
+          </article>
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 3V8M15 3V8M6 8H18V11C18 14.3 15.3 17 12 17C8.7 17 6 14.3 6 11V8Z" stroke="#0E8A5F" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 17V21" stroke="#0E8A5F" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <h3>工具注入</h3><p>工具返回内容中藏有针对模型的指令注入，来源可查。</p>
+          </article>
+          <article class="card">
+            <svg class="icon icon--card" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" stroke="#0E8A5F" stroke-width="1.8"/><path d="M8 10V7C8 4.8 9.8 3 12 3C14.2 3 16 4.8 16 7V10" stroke="#0E8A5F" stroke-width="1.8"/></svg>
+            <h3>保险柜访问</h3><p>对保险柜保护对象的每一次访问，全部留痕可审计。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 审计说明 -->
+    <section class="section">
+      <div class="container">
+        <div class="section__head">
+          <h2>告警只提醒，不添乱</h2>
+          <p>防护信号全部为只读审计：命中即告警与留痕，不改动你的请求与响应。</p>
+        </div>
+        <div class="grid grid--3">
+          <article class="card card--tint">
+            <h3>独立开关</h3>
+            <p>每类信号都能单独启用或关闭，按自己的工作流取舍噪音。</p>
+          </article>
+          <article class="card card--tint">
+            <h3>证据脱敏</h3>
+            <p>审计证据只含类型、长度、哈希与计数，不含任何敏感原文。</p>
+          </article>
+          <article class="card card--tint">
+            <h3>全程留痕</h3>
+            <p>每次命中都有时间、域名与进程信息，事后可追溯。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 底部 CTA -->
+    <section class="cta">
+      <div class="container">
+        <h2>今天就装上，明天才安心</h2>
+        <p>下载安装、一键开启系统代理，剩下的事交给 AI 安全卫士。</p>
+        <div class="hero__cta">
+          <a class="btn btn--primary" href="download.html">免费下载 v0.1.2</a>
+          <a class="btn btn--ghost-dark" href="how-it-works.html">了解工作原理</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer__top">
+        <div class="footer__brand">
+          <a class="nav__brand nav__brand--dark" href="index.html">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2L20 5V11C20 16 16.5 20.4 12 22C7.5 20.4 4 16 4 11V5L12 2Z" fill="#0E8A5F"/><path d="M8.5 11.5L11 14L15.5 9.5" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>AI 安全卫士</span>
+          </a>
+          <p>本机运行的 AI 流量防护代理</p>
+        </div>
+        <nav class="footer__col" aria-label="页面">
+          <h3>页面</h3>
+          <a href="how-it-works.html">工作原理</a>
+          <a href="signals.html">防护信号</a>
+          <a href="features.html">能力与规则</a>
+          <a href="privacy.html">隐私承诺</a>
+          <a href="faq.html">常见问题</a>
+        </nav>
+        <nav class="footer__col" aria-label="产品">
+          <h3>产品</h3>
+          <a href="download.html">下载 v0.1.2</a>
+          <a href="changelog.html">更新日志</a>
+          <a href="https://github.com/Technicalflight/AiGuard/releases" target="_blank" rel="noopener">GitHub Releases</a>
+        </nav>
+        <nav class="footer__col" aria-label="资源">
+          <h3>资源</h3>
+          <a href="https://github.com/Technicalflight/AiGuard" target="_blank" rel="noopener">GitHub 仓库</a>
+          <a href="https://github.com/Technicalflight/AiGuard/issues" target="_blank" rel="noopener">问题反馈</a>
+          <a href="https://github.com/Technicalflight/AiGuard/blob/main/LICENSE" target="_blank" rel="noopener">AGPL-3.0 协议</a>
+        </nav>
+      </div>
+      <div class="footer__bar">
+        <span>Copyright 2026 AI 安全卫士 · AGPL-3.0 开源</span>
+        <span>Built by <a href="https://github.com/Technicalflight" target="_blank" rel="noopener">Technicalflight</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
