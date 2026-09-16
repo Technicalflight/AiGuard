@@ -1,6 +1,6 @@
 [package]
 name = "aiguard-core"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "AI 安全卫士核心逻辑：敏感信息检测、映射表、流式还原"
 

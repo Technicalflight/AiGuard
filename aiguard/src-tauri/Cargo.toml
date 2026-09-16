@@ -1,6 +1,6 @@
 [package]
 name = "aiguard"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "AI 安全卫士：本地 MITM 代理拦截发往 AI 服务的流量并脱敏"
 
