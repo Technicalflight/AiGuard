@@ -843,6 +843,58 @@ fn purge_req_ctx(m: &mut HashMap<String, (Instant, ReqInfo)>, now: Instant) {
     }
 }
 
+// ─────────── 凭据使用提醒（A/B 两路聚合） ───────────
+
+/// A 路（脱敏放行）payload path 标识：凭据被替换为占位符后出站。
+pub const VAULT_MASKED_PATH: &str = "masked";
+/// B 路（白名单完全直通）payload path 标识：凭据值明文外发（高危，建议轮换）。
+pub const VAULT_PLAINTEXT_PATH: &str = "plaintext";
+/// 凭据使用提醒的冷却窗口（秒）：窗口内重复使用只累加计数、不重复打扰。
+pub const VAULT_NOTICE_COOLDOWN_SECS: u64 = 600;
+/// 单连接在途凭据使用记录的合并上限（防异常流量无限堆积；TTL 内至多几百请求）。
+const VAULT_PENDING_MAX: usize = 16;
+
+/// 请求侧挂起、响应完成时冲账的凭据使用记录（A/B 两路共用形态）。
+#[derive(Debug, Clone)]
+pub struct PendingVaultUse {
+    /// "masked"（A 路）| "plaintext"（B 路）
+    pub path: String,
+    /// 命中的条目键名（去重；绝不含凭据值）
+    pub entries: Vec<String>,
+    /// 挂起时间（冲账时按 TTL 丢弃过期记录）
+    pub ts: f64,
+}
+
+/// 单条目凭据使用的聚合状态（内存态，不落盘）。
+#[derive(Debug, Clone, Default)]
+pub struct VaultEntryUse {
+    /// 自上一轮提醒以来的累计使用次数
+    pub count: u64,
+    /// 本轮首次使用时间（Unix 秒）
+    pub first_ts: f64,
+    /// 最近一次使用时间（Unix 秒）
+    pub last_ts: f64,
+    /// 下一次允许提醒的时间（0 = 不在冷却中）
+    pub next_notify_ts: f64,
+}
+
+/// 提醒负载中的单条目信息。
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultNoticeEntry {
+    pub name: String,
+    pub count: u64,
+    pub first_ts: f64,
+}
+
+/// 一轮凭据使用提醒（emit 给前端的 payload；隐私红线：只含条目名 / 次数 / 时间戳，
+/// 绝无凭据值或请求内容）。
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultNotice {
+    /// "masked"（A 路，黄色横幅）| "plaintext"（B 路，红色横幅 + 窗口外系统通知）
+    pub path: String,
+    pub entries: Vec<VaultNoticeEntry>,
+}
+
 /// 全局共享状态。
 pub struct AppState {
     /// 检测引擎（请求侧脱敏主链路；RwLock 支持运行时热更新规则）
@@ -863,6 +915,10 @@ pub struct AppState {
     pub marker_registry: Mutex<HashMap<String, f64>>,
     /// 请求上下文：client addr → (最近时间, 请求信息)
     pub req_ctx: Mutex<HashMap<String, (Instant, ReqInfo)>>,
+    /// 凭据使用提醒（A/B 路）：client addr → 在途记录（请求侧挂起、响应完成冲账）
+    vault_pending: Mutex<HashMap<String, Vec<PendingVaultUse>>>,
+    /// 凭据使用聚合："(path)\u{1}(name)" → 计数与冷却状态（内存态）
+    vault_usage: Mutex<HashMap<String, VaultEntryUse>>,
     /// 请求侧会话缓存：client addr -> (写入时间, session)
     pub addr_sessions: RwLock<HashMap<String, (Instant, String)>>,
     /// 会话元信息：session -> (域名 / 进程 / 首次与最后活动时间)
@@ -1125,6 +1181,8 @@ impl AppState {
             audit_writer,
             marker_registry: Mutex::new(HashMap::new()),
             req_ctx: Mutex::new(HashMap::new()),
+            vault_pending: Mutex::new(HashMap::new()),
+            vault_usage: Mutex::new(HashMap::new()),
             addr_sessions: RwLock::new(HashMap::new()),
             session_meta: RwLock::new(HashMap::new()),
             recent_events: RwLock::new(VecDeque::new()),
@@ -1430,6 +1488,12 @@ impl AppState {
         if let Ok(mut m) = self.marker_registry.lock() {
             m.clear();
         }
+        if let Ok(mut m) = self.vault_pending.lock() {
+            m.clear();
+        }
+        if let Ok(mut m) = self.vault_usage.lock() {
+            m.clear();
+        }
         if let Ok(mut m) = self.proc_cache.lock() {
             m.clear();
         }
@@ -1645,13 +1709,27 @@ impl AppState {
     }
 
     /// 周期清理过期的请求上下文（含请求正文采样**内存擦除**），返回清理条数。
+    ///
+    /// 同场清扫 [`Self::vault_pending`]：SSE 中途断连等场景下 `flush_vault_use`
+    /// 永远不会被调用，挂起的凭据使用记录若不按时效回收会随异常连接累积
+    /// （键是客户端地址，量无上界）。到期的挂起记录**直接丢弃不冲账**——
+    /// 与 [`Self::flush_vault_use`] 里的到期语义一致：没等到响应的计数不进聚合器。
     pub fn purge_expired_req_ctx(&self) -> usize {
+        let mut removed = 0usize;
         if let Ok(mut m) = self.req_ctx.lock() {
             let before = m.len();
             purge_req_ctx(&mut m, Instant::now());
-            return before - m.len();
+            removed += before - m.len();
         }
-        0
+        // 凭据使用挂起记录：整条按挂起时间到期丢弃（含键级空壳一并移除）
+        if let Ok(mut m) = self.vault_pending.lock() {
+            let now = now_secs_f64();
+            m.retain(|_, list| {
+                list.retain(|p| now - p.ts <= REQ_CTX_KEEP_SECS as f64);
+                !list.is_empty()
+            });
+        }
+        removed
     }
 
     /// 记录一个代理客户端进程（exe 完整路径）。
@@ -1869,6 +1947,180 @@ impl AppState {
                 let _ = handle.emit(event, payload);
             }
         }
+    }
+
+    // ─────────────────────── 凭据使用提醒（A/B 两路） ───────────────────────
+
+    /// 挂起一笔凭据使用记录（请求侧调用；响应完成时冲账进聚合器）。
+    ///
+    /// - 同一连接同一路径的记录**合并去重**（多次请求命中同一批条目只留一份）；
+    /// - A/B 两路各自独立记录，不互相合并；
+    /// - 每连接上限 [`VAULT_PENDING_MAX`] 笔，超出丢弃最旧（防异常流量堆积）。
+    pub fn stage_vault_use(&self, client_addr: &str, path: &str, entries: Vec<String>) {
+        if entries.is_empty() {
+            return;
+        }
+        let mut m = match self.vault_pending.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let list = m.entry(client_addr.to_string()).or_default();
+        match list.iter_mut().find(|p| p.path == path) {
+            Some(slot) => {
+                for e in entries {
+                    if !slot.entries.contains(&e) {
+                        slot.entries.push(e);
+                    }
+                }
+            }
+            None => {
+                list.push(PendingVaultUse {
+                    path: path.to_string(),
+                    entries,
+                    ts: now_secs_f64(),
+                });
+                // 超上限：丢最旧的一笔（B 路优先保留——明文外发的提醒价值更高）
+                while list.len() > VAULT_PENDING_MAX {
+                    let drop_idx = list
+                        .iter()
+                        .position(|p| p.path != VAULT_PLAINTEXT_PATH)
+                        .unwrap_or(0);
+                    list.remove(drop_idx);
+                }
+            }
+        }
+    }
+
+    /// 丢弃该连接在途的凭据使用记录。
+    ///
+    /// 语义上对应「请求未送达 AI 服务」的场景（Block 403 时该请求的两路均不计数；
+    /// 当前实现里 Block 分支不会 stage 本请求的记录，此方法保留给后续需要
+    /// 显式作废的场景与测试）。
+    #[allow(dead_code)]
+    pub fn clear_vault_pending(&self, client_addr: &str) {
+        if let Ok(mut m) = self.vault_pending.lock() {
+            m.remove(client_addr);
+        }
+    }
+
+    /// 响应完成时冲账该连接在途的凭据使用 → 聚合器 → 冷却判定 → 提醒。
+    ///
+    /// 冲账点（proxy.rs）：错误响应、非文本透传、整段还原（成功/失败）、
+    /// SSE 流结束与流异常中断。在途记录超过保留期（与请求上下文同 TTL）直接丢弃。
+    pub fn flush_vault_use(&self, client_addr: &str) {
+        let pending: Vec<PendingVaultUse> = {
+            let mut m = match self.vault_pending.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            m.remove(client_addr).unwrap_or_default()
+        };
+        let now = now_secs_f64();
+        for p in pending {
+            // TTL：响应一直没回来的挂起记录到期即弃（避免跨轮次误计）
+            if now - p.ts > REQ_CTX_KEEP_SECS as f64 {
+                continue;
+            }
+            if let Some(notice) = self.record_vault_use(&p.path, &p.entries) {
+                self.emit_vault_notice(&notice);
+            }
+        }
+    }
+
+    /// 聚合一笔凭据使用；冷却窗口内只累加计数（返回 `None`），
+    /// 窗口开启（或新条目首次使用）时返回一轮提醒。
+    ///
+    /// 聚合键 = (path, 条目名)：A/B 两路独立计数；不同条目互不合并。
+    fn record_vault_use(&self, path: &str, entries: &[String]) -> Option<VaultNotice> {
+        if entries.is_empty() {
+            return None;
+        }
+        let now = now_secs_f64();
+        let mut m = match self.vault_usage.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let mut ready: Vec<VaultNoticeEntry> = Vec::new();
+        for name in entries {
+            // key 数量上界 = 2 × 条目数（≤400），无需额外清理
+            let key = format!("{}\u{1}{}", path, name);
+            let e = m
+                .entry(key)
+                .or_insert_with(|| VaultEntryUse {
+                    first_ts: now,
+                    ..VaultEntryUse::default()
+                });
+            e.count += 1;
+            e.last_ts = now;
+            if e.next_notify_ts == 0.0 || now >= e.next_notify_ts {
+                // 新一轮提醒：带上本轮累计次数与本轮首次时间，随后开启新冷却窗
+                ready.push(VaultNoticeEntry {
+                    name: name.clone(),
+                    count: e.count,
+                    first_ts: e.first_ts,
+                });
+                e.next_notify_ts = now + VAULT_NOTICE_COOLDOWN_SECS as f64;
+                e.count = 0;
+                e.first_ts = now;
+            }
+        }
+        if ready.is_empty() {
+            return None;
+        }
+        Some(VaultNotice {
+            path: path.to_string(),
+            entries: ready,
+        })
+    }
+
+    /// 发出一轮凭据使用提醒。
+    ///
+    /// UI 横幅（`vault-notice` 事件）恒发；B 路（明文外发）在主窗口不在前台时
+    /// 追加系统通知——这是通知克制三规则的**有意例外**：凭据明文出网属于用户
+    /// 必须第一时间知道的高危事件，且本提醒天然低频（600s 冷却）。
+    /// 文案走 i18n（托盘 / 通知同源）；内容只含条目名 / 次数 / 时间。
+    fn emit_vault_notice(&self, notice: &VaultNotice) {
+        self.emit_event("vault-notice", notice.clone());
+        if notice.path != VAULT_PLAINTEXT_PATH {
+            return; // A 路只有界面横幅
+        }
+        let guard = match self.app_handle.read() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let Some(handle) = guard.as_ref() else {
+            return;
+        };
+        {
+            use tauri::Manager;
+            if let Some(win) = handle.get_webview_window("main") {
+                if win.is_focused().unwrap_or(false) {
+                    return; // 用户正看着界面：横幅足够，不再弹系统通知
+                }
+            }
+        }
+        let (title, body) = crate::i18n::vault_notice_text(self.language(), notice);
+        use tauri_plugin_notification::NotificationExt;
+        if let Err(e) = handle.notification().builder().title(title).body(body).show() {
+            log::warn!("凭据提醒系统通知发送失败: {}", safe_err(&e));
+        }
+    }
+
+    /// 聚合器调试视图（测试与诊断用）：某一路当前有记录的条目名清单。
+    #[allow(dead_code)]
+    pub fn vault_notice_debug_state(&self, path: &str) -> Vec<String> {
+        let m = match self.vault_usage.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let prefix = format!("{}\u{1}", path);
+        let mut out: Vec<String> = m
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .map(|k| k[prefix.len()..].to_string())
+            .collect();
+        out.sort();
+        out
     }
 }
 
@@ -2250,6 +2502,232 @@ mod tests {
         assert_eq!(st.req_info_for("127.0.0.1:5000").body_text, "");
         // 幂等：再清一次什么都不剩
         assert_eq!(st.purge_all_memory(), (0, 0, 0));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ─────────── 凭据使用提醒（A/B 两路聚合） ───────────
+
+    #[test]
+    fn test_vault_use_cooldown_merges_counts() {
+        let (st, dir) = temp_state();
+        let addr = "127.0.0.1:56001";
+        // 首次使用：立即产生提醒（count=1）
+        st.stage_vault_use(addr, VAULT_MASKED_PATH, vec!["K1".to_string()]);
+        st.flush_vault_use(addr);
+        assert_eq!(st.vault_notice_debug_state(VAULT_MASKED_PATH), vec!["K1"]);
+        {
+            let m = st.vault_usage.lock().unwrap();
+            let e = m.get(&format!("{}\u{1}K1", VAULT_MASKED_PATH)).unwrap();
+            assert_eq!(e.count, 0, "提醒后本轮计数清零");
+            assert!(e.next_notify_ts > now_secs_f64(), "冷却窗必须已开启");
+        }
+        // 冷却窗口内重复使用：只累加计数、不再提醒
+        st.stage_vault_use(addr, VAULT_MASKED_PATH, vec!["K1".to_string(), "K1".to_string()]);
+        st.flush_vault_use(addr);
+        {
+            let m = st.vault_usage.lock().unwrap();
+            let e = m.get(&format!("{}\u{1}K1", VAULT_MASKED_PATH)).unwrap();
+            assert_eq!(e.count, 2, "窗口内使用必须合并计数");
+        }
+        // 冷却到期：再次使用产生新一轮提醒（带上窗口内累计次数）
+        {
+            let mut m = st.vault_usage.lock().unwrap();
+            let key = format!("{}\u{1}K1", VAULT_MASKED_PATH);
+            m.get_mut(&key).unwrap().next_notify_ts = now_secs_f64() - 1.0;
+        }
+        st.stage_vault_use(addr, VAULT_MASKED_PATH, vec!["K1".to_string()]);
+        st.flush_vault_use(addr);
+        {
+            let m = st.vault_usage.lock().unwrap();
+            let e = m.get(&format!("{}\u{1}K1", VAULT_MASKED_PATH)).unwrap();
+            assert_eq!(e.count, 0, "新一轮提醒后计数再次清零");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_vault_use_paths_independent() {
+        let (st, dir) = temp_state();
+        let addr = "127.0.0.1:56002";
+        // A 路与 B 路各自独立：同一条目在两路都处于独立冷却
+        st.stage_vault_use(addr, VAULT_MASKED_PATH, vec!["TOKEN".to_string()]);
+        st.stage_vault_use(addr, VAULT_PLAINTEXT_PATH, vec!["TOKEN".to_string()]);
+        st.flush_vault_use(addr);
+        assert_eq!(st.vault_notice_debug_state(VAULT_MASKED_PATH), vec!["TOKEN"]);
+        assert_eq!(st.vault_notice_debug_state(VAULT_PLAINTEXT_PATH), vec!["TOKEN"]);
+        // 两路各自的窗口内重复：互不提醒
+        st.stage_vault_use(addr, VAULT_MASKED_PATH, vec!["TOKEN".to_string()]);
+        st.stage_vault_use(addr, VAULT_PLAINTEXT_PATH, vec!["TOKEN".to_string()]);
+        st.flush_vault_use(addr);
+        {
+            let m = st.vault_usage.lock().unwrap();
+            assert_eq!(
+                m.get(&format!("{}\u{1}TOKEN", VAULT_MASKED_PATH)).unwrap().count, 1,
+                "A 路窗口内计数独立"
+            );
+            assert_eq!(
+                m.get(&format!("{}\u{1}TOKEN", VAULT_PLAINTEXT_PATH)).unwrap().count, 1,
+                "B 路窗口内计数独立"
+            );
+        }
+        // 挂起合并：同连接同一路径去重，不同路径各自保留
+        st.stage_vault_use(addr, VAULT_MASKED_PATH, vec!["A".to_string()]);
+        st.stage_vault_use(addr, VAULT_MASKED_PATH, vec!["A".to_string(), "B".to_string()]);
+        st.stage_vault_use(addr, VAULT_PLAINTEXT_PATH, vec!["A".to_string()]);
+        st.flush_vault_use(addr);
+        assert_eq!(
+            st.vault_notice_debug_state(VAULT_MASKED_PATH),
+            vec!["A", "B", "TOKEN"],
+            "A 路挂起按条目去重合并"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_vault_use_per_entry_isolation() {
+        let (st, dir) = temp_state();
+        let addr = "127.0.0.1:56003";
+        // 两个条目同时首轮使用：同批提醒
+        st.stage_vault_use(addr, VAULT_MASKED_PATH, vec!["E1".to_string(), "E2".to_string()]);
+        st.flush_vault_use(addr);
+        assert_eq!(st.vault_notice_debug_state(VAULT_MASKED_PATH), vec!["E1", "E2"]);
+        // E1 在冷却内、E3 首次使用：只提醒 E3，E1 被静默合并（条目间互不影响）
+        st.stage_vault_use(addr, VAULT_MASKED_PATH, vec!["E1".to_string(), "E3".to_string()]);
+        st.flush_vault_use(addr);
+        assert_eq!(st.vault_notice_debug_state(VAULT_MASKED_PATH), vec!["E1", "E2", "E3"]);
+        {
+            let m = st.vault_usage.lock().unwrap();
+            assert_eq!(m.get(&format!("{}\u{1}E1", VAULT_MASKED_PATH)).unwrap().count, 1, "E1 只累计");
+            assert_eq!(m.get(&format!("{}\u{1}E3", VAULT_MASKED_PATH)).unwrap().count, 0, "E3 新轮提醒后清零");
+        }
+        // 冲账后该连接在途记录清空；再冲一次无事发生
+        st.flush_vault_use(addr);
+        {
+            let m = st.vault_usage.lock().unwrap();
+            assert_eq!(m.get(&format!("{}\u{1}E1", VAULT_MASKED_PATH)).unwrap().count, 1);
+        }
+        // 应急清空：内存态一并销毁
+        st.purge_all_memory();
+        assert!(st.vault_notice_debug_state(VAULT_MASKED_PATH).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 提醒载荷的真实形状（直测私有聚合函数）：首用即报 count=1、
+    /// 窗口内合并为 None、冷却过期后新轮次报**累计值**再重置；A/B 两路冷却独立。
+    #[test]
+    fn test_record_vault_use_notice_payload_counts() {
+        let (st, dir) = temp_state();
+        // 首用即报：载荷 count=1，first_ts = 本轮首次使用时间
+        let n1 = st
+            .record_vault_use(VAULT_MASKED_PATH, &["K9".to_string()])
+            .expect("首用必须产生提醒");
+        assert_eq!(n1.path, VAULT_MASKED_PATH);
+        assert_eq!(n1.entries.len(), 1, "单条目单提醒");
+        assert_eq!(n1.entries[0].name, "K9");
+        assert_eq!(n1.entries[0].count, 1);
+        let window_first_ts = {
+            let m = st.vault_usage.lock().unwrap();
+            m.get(&format!("{}\u{1}K9", VAULT_MASKED_PATH))
+                .unwrap()
+                .first_ts
+        };
+        assert_eq!(n1.entries[0].first_ts, window_first_ts);
+
+        // 冷却窗口内第二次使用：合并为一条（不再提醒），计数静默累加
+        assert!(st
+            .record_vault_use(VAULT_MASKED_PATH, &["K9".to_string()])
+            .is_none());
+
+        // 冷却过期：新轮次提醒必须携带窗口内**累计**次数（2 = 窗口内 1 + 本次 1）
+        {
+            let mut m = st.vault_usage.lock().unwrap();
+            m.get_mut(&format!("{}\u{1}K9", VAULT_MASKED_PATH))
+                .unwrap()
+                .next_notify_ts = now_secs_f64() - 1.0;
+        }
+        let n3 = st
+            .record_vault_use(VAULT_MASKED_PATH, &["K9".to_string()])
+            .expect("冷却过期必须再次提醒");
+        assert_eq!(n3.entries[0].count, 2, "新轮次提醒必须携带窗口内累计次数");
+        assert_eq!(
+            n3.entries[0].first_ts, window_first_ts,
+            "first_ts 应为本轮（窗口）首次使用时间"
+        );
+
+        // A/B 两路冷却独立（载荷级复核）：masked 刚开启新冷却，plaintext 首用仍立即提醒
+        let nb = st
+            .record_vault_use(VAULT_PLAINTEXT_PATH, &["K9".to_string()])
+            .expect("B 路冷却必须独立于 A 路");
+        assert_eq!(nb.path, VAULT_PLAINTEXT_PATH);
+        assert_eq!(nb.entries[0].count, 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 单连接挂起上限：超过 [`VAULT_PENDING_MAX`] 丢弃最旧的非明文记录，
+    /// 明文（B 路）优先保留。
+    #[test]
+    fn test_vault_pending_cap_drops_oldest_keeps_plaintext() {
+        let (st, dir) = temp_state();
+        let addr = "127.0.0.1:56004";
+        // 1 条明文 + 19 条自定义路径（不同路径才会各占一笔挂起记录）
+        st.stage_vault_use(addr, VAULT_PLAINTEXT_PATH, vec!["PT".to_string()]);
+        for i in 0..19 {
+            st.stage_vault_use(addr, &format!("p{:02}", i), vec![format!("E{:02}", i)]);
+        }
+        st.flush_vault_use(addr);
+        // 上限 16：明文保留 + 最新 15 条自定义路径；最老的 4 条（p00..p03）被丢弃
+        let mut survived = 0;
+        for i in 0..19 {
+            let alive = !st.vault_notice_debug_state(&format!("p{:02}", i)).is_empty();
+            assert_eq!(
+                alive,
+                i >= 4,
+                "p{:02} 应{}（按最旧丢弃、明文优先保留）",
+                i,
+                if i >= 4 { "" } else { "被丢弃 " }
+            );
+            if alive {
+                survived += 1;
+            }
+        }
+        assert_eq!(survived, 15, "挂起上限应为 16 = 1 明文 + 15 其它");
+        assert!(
+            !st.vault_notice_debug_state(VAULT_PLAINTEXT_PATH).is_empty(),
+            "明文路径必须优先保留"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 周期清扫兜底：SSE 中途断连等场景 `flush_vault_use` 不会被调用，
+    /// 过期挂起记录必须被 `purge_expired_req_ctx` 丢弃（不冲账、键级空壳一并移除）。
+    #[test]
+    fn test_vault_pending_purged_by_purge_expired_req_ctx() {
+        let (st, dir) = temp_state();
+        let addr = "127.0.0.1:56005";
+        st.stage_vault_use(addr, VAULT_MASKED_PATH, vec!["KP".to_string()]);
+        st.stage_vault_use("127.0.0.1:56006", VAULT_PLAINTEXT_PATH, vec!["KQ".to_string()]);
+        // 把挂起时间改到保留期之外（模拟响应一直没回来）
+        if let Ok(mut m) = st.vault_pending.lock() {
+            let old = now_secs_f64() - (REQ_CTX_KEEP_SECS as f64 + 1.0);
+            for list in m.values_mut() {
+                for p in list.iter_mut() {
+                    p.ts = old;
+                }
+            }
+        }
+        st.purge_expired_req_ctx();
+        assert!(
+            st.vault_pending
+                .lock()
+                .map(|m| m.is_empty())
+                .unwrap_or(false),
+            "过期挂起记录必须被周期清扫移除（含键级空壳）"
+        );
+        assert!(
+            st.vault_notice_debug_state(VAULT_MASKED_PATH).is_empty()
+                && st.vault_notice_debug_state(VAULT_PLAINTEXT_PATH).is_empty(),
+            "清扫是丢弃语义：过期记录不得冲账进聚合器"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

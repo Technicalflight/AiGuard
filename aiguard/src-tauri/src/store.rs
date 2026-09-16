@@ -88,6 +88,40 @@ pub struct AuditEventRow {
     pub rule_ver: String,
 }
 
+/// 反馈统计的回看窗口（秒）：30 天。
+pub const FP_STATS_WINDOW_SECS: u64 = 30 * 86_400;
+
+/// 单维度的反馈统计行（per_signal 与 per_rule 共用形态）。
+///
+/// `key`：per_signal 为信号名（如 error_leak），per_rule 为规则 id
+/// （如 builtin.bankcard）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FpSignalStat {
+    pub key: String,
+    /// 窗口内命中次数
+    pub hits: i64,
+    /// 用户标记为误报的次数
+    pub fp: i64,
+    /// 用户确认的次数
+    pub tn: i64,
+}
+
+/// 反馈统计汇总（「反馈统计」卡片的两个小表）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FpStats {
+    pub per_signal: Vec<FpSignalStat>,
+    pub per_rule: Vec<FpSignalStat>,
+}
+
+/// 校验并归一用户反馈标签：仅接受 fp / tn / none（去除首尾空白）。
+fn normalize_label(label: &str) -> Result<String, String> {
+    let l = label.trim();
+    match l {
+        "fp" | "tn" | "none" => Ok(l.to_string()),
+        _ => Err(format!("无效的反馈标签: {}（仅 fp / tn / none）", l)),
+    }
+}
+
 /// 幂等加列：表里缺该列才执行 ALTER TABLE ADD COLUMN。
 ///
 /// PRAGMA 无法参数绑定，`table` / `column` / `ddl` 均须来自调用点常量
@@ -190,6 +224,10 @@ impl Store {
     }
 
     /// 写入一条请求日志。
+    ///
+    /// `rule_id`：本次请求命中的规则 id 列表（去重后逗号连接，如
+    /// `builtin.bankcard,builtin.email`），供反馈统计的 per-rule 维度聚合；
+    /// 未命中规则时传空串。审计事件不落 rule_id（信号聚合已按 signal_type）。
     pub fn log_request(
         &self,
         ts: &str,
@@ -200,11 +238,12 @@ impl Store {
         action: &str,
         req_hash: &str,
         blocked: bool,
+        rule_id: &str,
     ) -> Result<i64, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO request_log (ts, host, path, session, kinds, action, req_hash, blocked)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO request_log (ts, host, path, session, kinds, action, req_hash, blocked, rule_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 ts,
                 host,
@@ -213,11 +252,138 @@ impl Store {
                 kinds,
                 action,
                 req_hash,
-                blocked as i64
+                blocked as i64,
+                rule_id
             ],
         )
         .map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
+    }
+
+    /// 设置一条请求日志的用户反馈标签（误报反馈闭环）。
+    ///
+    /// 只更新 `user_label` 与 `label_ts`（恒取当前时间），其余字段不动；
+    /// `label` 仅接受 `fp`（误报）/ `tn`（确认）/ `none`（撤销标签），
+    /// 其他值返回 Err（前端输入面之外的双重保险）。
+    pub fn set_request_label(&self, id: i64, label: &str) -> Result<(), String> {
+        let label = normalize_label(label)?;
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let n = conn
+            .execute(
+                "UPDATE request_log SET user_label = ?1, label_ts = ?2 WHERE id = ?3",
+                rusqlite::params![label, now_secs_f64(), id],
+            )
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err(format!("请求日志不存在: id={}", id));
+        }
+        Ok(())
+    }
+
+    /// 设置一条审计事件的用户反馈标签（语义与 [`Store::set_request_label`] 一致）。
+    pub fn set_audit_label(&self, seq: i64, label: &str) -> Result<(), String> {
+        let label = normalize_label(label)?;
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let n = conn
+            .execute(
+                "UPDATE audit_events SET user_label = ?1, label_ts = ?2 WHERE id = ?3",
+                rusqlite::params![label, now_secs_f64(), seq],
+            )
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err(format!("审计事件不存在: seq={}", seq));
+        }
+        Ok(())
+    }
+
+    /// 反馈统计：误报反馈闭环的近窗聚合（默认 30 天，见 [`FP_STATS_WINDOW_SECS`]）。
+    ///
+    /// - `per_signal`：审计事件按 signal_type 分组 → 命中 / 误报 / 确认；
+    /// - `per_rule`：请求日志按 rule_id 聚合（rule_id 为逗号连接的列表，
+    ///   SQLite 无法直接 GROUP BY，因此在 Rust 侧拆分累加；rule_id 为空的行不计入）。
+    ///
+    /// 隐私：统计只含计数，不涉及任何请求内容。
+    pub fn fp_stats(&self) -> Result<FpStats, String> {
+        let cutoff = now_secs_f64() - FP_STATS_WINDOW_SECS as f64;
+        // 两张表的 ts 列类型不同（request_log=TEXT 秒串 / audit_events=REAL），
+        // cutoff 按各自列类型绑定，避免依赖隐式亲和转换：
+        // - TEXT 秒串按等长十进制字典序 == 数值序（epoch 秒 10 位，稳至 2286 年）；
+        // - REAL 侧直接数值比较。
+        let cutoff_req = format!("{:.0}", cutoff);
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+
+        // 审计事件：按 signal_type 分组计数
+        let mut stmt = conn
+            .prepare(
+                "SELECT signal_type, COUNT(*), \
+                 SUM(CASE WHEN user_label = 'fp' THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN user_label = 'tn' THEN 1 ELSE 0 END) \
+                 FROM audit_events WHERE ts >= ?1 GROUP BY signal_type",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![cutoff], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut per_signal: Vec<FpSignalStat> = Vec::new();
+        for row in rows {
+            let (signal_type, hits, fp, tn) = row.map_err(|e| e.to_string())?;
+            per_signal.push(FpSignalStat {
+                key: signal_type,
+                hits,
+                fp,
+                tn,
+            });
+        }
+        per_signal.sort_by(|a, b| b.hits.cmp(&a.hits).then(a.key.cmp(&b.key)));
+
+        // 请求日志：rule_id 逗号列表在 Rust 侧拆分累加（空 rule_id 跳过）
+        let mut stmt = conn
+            .prepare(
+                "SELECT rule_id, COUNT(*), \
+                 SUM(CASE WHEN user_label = 'fp' THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN user_label = 'tn' THEN 1 ELSE 0 END) \
+                 FROM request_log WHERE rule_id != '' AND ts >= ?1 GROUP BY rule_id",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![cutoff_req], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut acc: std::collections::BTreeMap<String, (i64, i64, i64)> =
+            std::collections::BTreeMap::new();
+        for row in rows {
+            let (rule_ids, hits, fp, tn) = row.map_err(|e| e.to_string())?;
+            for rid in rule_ids.split(',') {
+                let rid = rid.trim();
+                if rid.is_empty() {
+                    continue;
+                }
+                let e = acc.entry(rid.to_string()).or_insert((0, 0, 0));
+                e.0 += hits;
+                e.1 += fp;
+                e.2 += tn;
+            }
+        }
+        let mut per_rule: Vec<FpSignalStat> = acc
+            .into_iter()
+            .map(|(key, (hits, fp, tn))| FpSignalStat { key, hits, fp, tn })
+            .collect();
+        per_rule.sort_by(|a, b| b.hits.cmp(&a.hits).then(a.key.cmp(&b.key)));
+
+        Ok(FpStats { per_signal, per_rule })
     }
 
     /// 按时间倒序列出最近 n 条日志。
@@ -803,11 +969,13 @@ mod tests {
                 "mask",
                 "abcdef1234567890",
                 false,
+                "builtin.phone",
             )
             .unwrap();
         let logs = store.list_requests(10).unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].kinds, r#"["PHONE"]"#);
+        assert_eq!(logs[0].rule_id, "builtin.phone");
         let (total, scrubbed, blocked, sessions) = store.stats().unwrap();
         assert_eq!((total, scrubbed, blocked, sessions), (1, 1, 0, 1));
 
@@ -1041,6 +1209,7 @@ mod tests {
                 "mask",
                 "abcdef1234567890",
                 false,
+                "",
             )
             .unwrap();
         let logs = store.list_requests(10).unwrap();
@@ -1071,7 +1240,17 @@ mod tests {
         {
             let store = Store::open(&db).unwrap();
             store
-                .log_request("2025-01-01T00:00:00Z", "a.com", "/p", "s1", "[]", "mask", "h1", false)
+                .log_request(
+                    "2025-01-01T00:00:00Z",
+                    "a.com",
+                    "/p",
+                    "s1",
+                    "[]",
+                    "mask",
+                    "h1",
+                    false,
+                    "",
+                )
                 .unwrap();
         }
         // 第二次 open：列已存在，ensure_column 应直接跳过
@@ -1083,6 +1262,191 @@ mod tests {
         }
         // 第三次 open：再次确认不报错
         Store::open(&db).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 反馈标签：合法值更新 user_label + label_ts，非法值拒绝，不存在行报错。
+    #[test]
+    fn test_set_labels_and_invalid_rejected() {
+        let dir = tmp_dir();
+        let store = Store::open(&dir.join("test.db")).unwrap();
+        let id = store
+            .log_request("2025-01-01T00:00:00Z", "a.com", "/p", "s1", "[]", "mask", "h1", false, "")
+            .unwrap();
+        store.insert_audit_events(&[row(1.0, "error_leak", "HIGH", "")]).unwrap();
+
+        // 标误报
+        store.set_request_label(id, "fp").unwrap();
+        let logs = store.list_requests(10).unwrap();
+        assert_eq!(logs[0].user_label, "fp");
+        assert!(logs[0].label_ts > 0.0, "打标签必须落当前时间戳");
+
+        // 改标确认（再次点击可改标）
+        store.set_request_label(id, "tn").unwrap();
+        let logs = store.list_requests(10).unwrap();
+        assert_eq!(logs[0].user_label, "tn");
+
+        // 撤销标签
+        store.set_request_label(id, "none").unwrap();
+        let logs = store.list_requests(10).unwrap();
+        assert_eq!(logs[0].user_label, "none");
+
+        // 审计事件同样可标
+        store.set_audit_label(1, "fp").unwrap();
+        let evs = store.fetch_audit_events_desc(10).unwrap();
+        assert_eq!(evs[0].user_label, "fp");
+        assert!(evs[0].label_ts > 0.0);
+
+        // 非法值拒绝（不能注入任意标签）
+        assert!(store.set_request_label(id, "bogus").is_err());
+        assert!(store.set_audit_label(1, "").is_err());
+        // 其他字段不被标签操作污染
+        let logs = store.list_requests(10).unwrap();
+        assert_eq!(logs[0].action, "mask");
+        // 不存在的行报错（而非静默成功）
+        assert!(store.set_request_label(999, "fp").is_err());
+        assert!(store.set_audit_label(999, "fp").is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 反馈统计：per_signal 按信号分组、per_rule 按逗号列表拆分聚合、
+    /// 空规则不计入、窗口外不计入。
+    #[test]
+    fn test_fp_stats_grouping() {
+        let dir = tmp_dir();
+        let store = Store::open(&dir.join("test.db")).unwrap();
+        let now = now_secs_f64();
+        let ts_str = |sec_offset: i64| (now + sec_offset as f64).to_string();
+
+        // 审计事件：error_leak 3 条（2 fp / 1 tn），sse_anomaly 2 条（未标）
+        store
+            .insert_audit_events(&[
+                row(now - 10.0, "error_leak", "HIGH", ""),
+                row(now - 9.0, "error_leak", "HIGH", ""),
+                row(now - 8.0, "error_leak", "HIGH", ""),
+                row(now - 7.0, "sse_anomaly", "LOW", ""),
+                row(now - 6.0, "sse_anomaly", "LOW", ""),
+            ])
+            .unwrap();
+        store.set_audit_label(1, "fp").unwrap();
+        store.set_audit_label(2, "fp").unwrap();
+        store.set_audit_label(3, "tn").unwrap();
+
+        // 请求日志：rule_id 逗号列表（bankcard+email 同行各计 1 次），
+        // 一条空 rule_id 的行不计入 per_rule；一条窗口外的行不计入
+        let id = store
+            .log_request(&ts_str(-5), "a.com", "/p1", "s1", "[]", "mask", "h1", false, "builtin.bankcard,builtin.email")
+            .unwrap();
+        store
+            .log_request(&ts_str(-4), "b.com", "/p2", "s2", "[]", "mask", "h2", false, "builtin.bankcard")
+            .unwrap();
+        store
+            .log_request(&ts_str(-3), "c.com", "/p3", "s3", "[]", "mask", "h3", false, "")
+            .unwrap();
+        // 窗口外（40 天前）：ts 是等长数字串，直接写老时间
+        let old_ts = (now - 40.0 * 86_400.0).to_string();
+        store
+            .log_request(&old_ts, "d.com", "/p4", "s4", "[]", "mask", "h4", false, "builtin.bankcard")
+            .unwrap();
+
+        // 标 1 条误报 + 1 条确认
+        store.set_request_label(id, "fp").unwrap();
+        store.set_request_label(id + 1, "tn").unwrap();
+
+        let stats = store.fp_stats().unwrap();
+
+        // per_signal
+        let leak = stats
+            .per_signal
+            .iter()
+            .find(|s| s.key == "error_leak")
+            .expect("error_leak 应在统计里");
+        assert_eq!((leak.hits, leak.fp, leak.tn), (3, 2, 1));
+        let sse = stats
+            .per_signal
+            .iter()
+            .find(|s| s.key == "sse_anomaly")
+            .expect("sse_anomaly 应在统计里");
+        assert_eq!((sse.hits, sse.fp, sse.tn), (2, 0, 0));
+
+        // per_rule：逗号拆分聚合；空 rule_id 不出现；窗口外被排除
+        let bank = stats
+            .per_rule
+            .iter()
+            .find(|s| s.key == "builtin.bankcard")
+            .expect("bankcard 应在统计里");
+        assert_eq!(bank.hits, 2, "两行（窗口内）都含 bankcard");
+        assert_eq!((bank.fp, bank.tn), (1, 1));
+        let email = stats
+            .per_rule
+            .iter()
+            .find(|s| s.key == "builtin.email")
+            .expect("email 应在统计里");
+        assert_eq!(email.hits, 1);
+        assert_eq!((email.fp, email.tn), (1, 0));
+        assert!(
+            !stats.per_rule.iter().any(|s| s.key.is_empty()),
+            "空 rule_id 不得进入 per_rule 统计"
+        );
+        assert_eq!(stats.per_rule.len(), 2, "窗口外 bankcard 行不计入");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 注入 20 条已知误报并打标，fp_stats 的 fp 计数必须恰好 20（写库失败=0 的回归位）。
+    #[test]
+    fn test_fp_stats_twenty_labeled_fps() {
+        let dir = tmp_dir();
+        let store = Store::open(&dir.join("test.db")).unwrap();
+        let now = now_secs_f64();
+        store
+            .insert_audit_events(
+                &(0..20)
+                    .map(|i| row(now - i as f64 - 1.0, "error_leak", "HIGH", ""))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        for seq in 1..=20 {
+            store.set_audit_label(seq, "fp").unwrap();
+        }
+        let stats = store.fp_stats().unwrap();
+        let leak = stats
+            .per_signal
+            .iter()
+            .find(|s| s.key == "error_leak")
+            .expect("统计必须包含已标注信号");
+        assert_eq!(leak.fp, 20, "20 条误报标签必须全部被统计");
+        assert_eq!(leak.hits, 20);
+        assert_eq!(leak.tn, 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// per_signal 的 30 天窗口负例：窗口外的审计事件不计入（test_fp_stats_grouping
+    /// 只覆盖了 request_log 的窗口外行，这里补 audit_events 一侧）。
+    #[test]
+    fn test_fp_stats_audit_window_excludes_old_events() {
+        let dir = tmp_dir();
+        let store = Store::open(&dir.join("test.db")).unwrap();
+        let now = now_secs_f64();
+        store
+            .insert_audit_events(&[
+                row(now - 10.0, "error_leak", "HIGH", ""),
+                // 40 天前：超出 FP_STATS_WINDOW_SECS，必须被窗口过滤
+                row(now - 40.0 * 86_400.0, "error_leak", "HIGH", ""),
+            ])
+            .unwrap();
+        store.set_audit_label(1, "fp").unwrap();
+        store.set_audit_label(2, "fp").unwrap();
+        let stats = store.fp_stats().unwrap();
+        let leak = stats
+            .per_signal
+            .iter()
+            .find(|s| s.key == "error_leak")
+            .expect("窗口内事件必须在统计里");
+        assert_eq!(leak.hits, 1, "窗口外审计事件不得计入 per_signal");
+        assert_eq!(leak.fp, 1);
+        assert_eq!(leak.tn, 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

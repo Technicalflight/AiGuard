@@ -123,6 +123,9 @@ pub struct LockerHit {
     pub start: usize,
     pub len: usize,
     pub action: crate::detector::Action,
+    /// 命中条目的键名（仅凭据值条目参与出站匹配，恒非空）。
+    /// 供「凭据使用提醒」按条目聚合，绝不含凭据值本身。
+    pub name: String,
 }
 
 /// 编译后的保险柜匹配器（只保留启用条目）。Clone 以便随 Detector 复制。
@@ -174,7 +177,7 @@ impl LockerEngine {
             return Vec::new();
         }
         let mut hits = Vec::new();
-        for (_, value, action) in &self.entries {
+        for (name, value, action) in &self.entries {
             let mut from = 0usize;
             while let Some(pos) = text[from..].find(value.as_str()) {
                 let start = from + pos;
@@ -182,11 +185,32 @@ impl LockerEngine {
                     start,
                     len: value.len(),
                     action: *action,
+                    name: name.clone(),
                 });
                 from = start + 1;
             }
         }
         hits
+    }
+
+    /// 凭据值命中条目名清单（去重）。
+    ///
+    /// 供白名单直通路径（请求正文不做脱敏改写、仍需凭据使用提醒）做一次
+    /// 轻量精确匹配：逐条目 `contains`，无正则、无 JSON 解析、无偏移计算，
+    /// 开销与条目数成正比（≤200 条），满足请求路径「轻量附加」的性能约束。
+    /// 返回值只含键名，绝不携带凭据值。
+    pub fn scan_entry_names(&self, text: &str) -> Vec<String> {
+        if self.entries.is_empty() || text.is_empty() {
+            return Vec::new();
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for (name, value, _) in &self.entries {
+            if seen.insert(name.clone()) && text.contains(value.as_str()) {
+                out.push(name.clone());
+            }
+        }
+        out
     }
 }
 
@@ -361,6 +385,31 @@ mod tests {
         };
         let engine = LockerEngine::new(&cfg);
         assert_eq!(engine.keys(), vec!["MY_KEY".to_string()]);
+    }
+
+    #[test]
+    fn test_scan_entry_names_dedup_and_skip_disabled() {
+        let cfg = LockerConfig {
+            entries: vec![
+                entry("TOKEN", "s3cr3t-value-9999", "mask", true),
+                entry("OFF", "disabled-value-777", "mask", false),
+                entry("KEY", "AKIAIOSFODNN7EXAMPLE", "block", true),
+                entry("PATH", "D:\\secrets\\api.key", "mask", true), // 路径条目不参与值匹配
+            ],
+        };
+        let mut cfg = cfg;
+        cfg.entries[3].kind = "path".to_string();
+        let engine = LockerEngine::new(&cfg);
+        // 同一文本里 TOKEN 值出现两次 → 只报一次条目名
+        let text = "use s3cr3t-value-9999 then s3cr3t-value-9999 and AKIAIOSFODNN7EXAMPLE";
+        let names = engine.scan_entry_names(text);
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"TOKEN".to_string()));
+        assert!(names.contains(&"KEY".to_string()));
+        // 无命中 → 空清单
+        assert!(engine.scan_entry_names("nothing relevant").is_empty());
+        // 禁用引擎 → 空清单
+        assert!(LockerEngine::disabled().scan_entry_names(text).is_empty());
     }
 
     #[test]

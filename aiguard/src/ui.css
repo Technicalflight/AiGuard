@@ -1204,6 +1204,19 @@ button.btn:disabled {
   color: var(--danger);
 }
 
+/* 反馈标签按钮的选中态：误报 = 琥珀 / 确认 = 绿（与徽章同源的设计变量） */
+.btn.mini.ok {
+  background: var(--brand-weak);
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.btn.mini.warn {
+  background: var(--warn-weak);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
 /* 空态 */
 .empty {
   padding: 56px 0;

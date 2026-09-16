@@ -746,6 +746,8 @@ fn main() {
             commands::set_restore_enabled,
             commands::list_requests_page,
             commands::list_audit_page,
+            commands::label_event,
+            commands::fp_stats,
             commands::get_cleanup_settings,
             commands::set_cleanup_settings,
             commands::cleanup_logs_now,

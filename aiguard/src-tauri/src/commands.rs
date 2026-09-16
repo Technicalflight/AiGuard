@@ -964,6 +964,35 @@ pub fn list_audit_page(
     })
 }
 
+// ─────────────────────────── 误报反馈闭环 ───────────────────────────
+
+/// 给一条日志打误报反馈标签。
+///
+/// `kind`：`"request"` → 请求页 / 审计页的 request_log 行（前端两处共用），
+/// `"audit"` → 安全事件页的 audit_events 行（per_signal 统计的数据源）。
+/// `label`：`"fp"`（误报）/ `"tn"`（确认）/ `"none"`（撤销）——合法性由 store 层校验，
+/// 非法取值返回错误；重复点击同一标签等价于撤销（后端直接覆盖，前端负责发 "none"）。
+#[tauri::command]
+pub fn label_event(
+    state: State<'_, Arc<AppState>>,
+    kind: String,
+    seq: i64,
+    label: String,
+) -> Result<(), String> {
+    match kind.as_str() {
+        "request" => state.store.set_request_label(seq, &label),
+        "audit" => state.store.set_audit_label(seq, &label),
+        other => Err(format!("未知的日志类型: {}", other)),
+    }
+}
+
+/// 误报反馈统计（近 30 天窗口）：per_signal 按 audit_events 聚合，
+/// per_rule 按 request_log 的 rule_id（逗号分隔串在 Rust 侧拆分）聚合。
+#[tauri::command]
+pub fn fp_stats(state: State<'_, Arc<AppState>>) -> Result<crate::store::FpStats, String> {
+    state.store.fp_stats()
+}
+
 // ─────────────────────────── 日志定期清理 ───────────────────────────
 
 /// 日志清理设置（天数，0 = 永久保留）。

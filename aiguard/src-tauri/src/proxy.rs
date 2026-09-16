@@ -146,7 +146,7 @@ impl AiGuardHandler {
         let blacklist_action = self.evaluate_blacklist(client_addr, &host);
         if blacklist_action.as_deref() == Some("block") {
             let path = req.uri().path().to_string();
-            self.log_request(&host, &path, "", &["BLACKLIST".to_string()], "block", "", true);
+            self.log_request(&host, &path, "", &["BLACKLIST".to_string()], "block", "", true, "");
             self.emit("", &["BLACKLIST".to_string()], &host, "block");
             let resp = Response::builder()
                 .status(403)
@@ -167,8 +167,9 @@ impl AiGuardHandler {
             self.evaluate_whitelist(client_addr, &host)
         };
         if whitelisted && !scrub_allowed {
-            self.log_passthrough(&host, req.uri().path(), client_addr);
-            return RequestOrResponse::Request(req);
+            let path = req.uri().path().to_string();
+            // 完全直通 ≠ 放任凭据外发：B 路扫描（凭据值精确匹配，正文不改写）
+            return self.bypass_passthrough_scan(req, &host, &path, client_addr).await;
         }
         // 名单对拦截动作的影响：黑名单（脱敏动作）或白名单（仍脱敏）命中时，
         // Block 规则降级为脱敏（不返回 403，仅替换占位符）
@@ -300,6 +301,9 @@ impl AiGuardHandler {
                 // Block 确认闸门：rule_id → (确认数, 所需次数)，达标才拦截
                 let mut block_confirms: std::collections::HashMap<String, (u32, u32)> =
                     std::collections::HashMap::new();
+                // 保险柜命中条目名（A 路使用提醒）与命中规则 id（反馈统计 per-rule 维度）
+                let mut vault_entries: Vec<String> = Vec::new();
+                let mut rule_ids: Vec<String> = Vec::new();
                 scrub_json_value(
                     &mut json,
                     &detector,
@@ -309,6 +313,8 @@ impl AiGuardHandler {
                     &mut block_confirms,
                     &mut hit_count,
                     force_mask,
+                    &mut vault_entries,
+                    &mut rule_ids,
                 );
                 let blocked = block_confirms
                     .values()
@@ -346,7 +352,19 @@ impl AiGuardHandler {
                     // 命中"拦截"规则：直接返回 403，不把请求发给 AI
                     self.state.vault.unpin(&session);
                     let path = parts.uri.path().to_string();
-                    self.log_request(&host, &path, &session, &kinds, "block", &req_hash, true);
+                    // Block 不算任何一路：请求未送达 AI 服务，凭据使用不计入
+                    // （本分支尚未 stage，无需清理；同一连接的在途记录属于上一请求，
+                    // 由其自身的响应完成点冲账）
+                    self.log_request(
+                        &host,
+                        &path,
+                        &session,
+                        &kinds,
+                        "block",
+                        &req_hash,
+                        true,
+                        &rule_ids.join(","),
+                    );
                     self.emit(&session, &kinds, &host, "block");
                     let resp = Response::builder()
                         .status(403)
@@ -362,8 +380,15 @@ impl AiGuardHandler {
                     // 无命中：原样透传（记录一条无命中日志）
                     let path = parts.uri.path().to_string();
                     let req = Request::from_parts(parts, Body::from(body_bytes.to_vec()));
-                    self.log_request(&host, &path, &session, &[], "passthrough", &req_hash, false);
+                    self.log_request(&host, &path, &session, &[], "passthrough", &req_hash, false, "");
                     return RequestOrResponse::Request(req);
+                }
+
+                // A 路（脱敏放行）：命中的保险柜条目挂到连接级在途集合，
+                // 响应完成时冲账进聚合器（见 `state::flush_vault_use`）
+                if !vault_entries.is_empty() {
+                    self.state
+                        .stage_vault_use(&addr_key, state::VAULT_MASKED_PATH, vault_entries);
                 }
 
                 // 用脱敏后的 JSON 重建请求
@@ -380,7 +405,16 @@ impl AiGuardHandler {
                 parts.headers.remove(HDR_CANARIES);
                 let path = parts.uri.path().to_string();
                 let req = Request::from_parts(parts, Body::from(new_body));
-                self.log_request(&host, &path, &session, &kinds, "mask", &req_hash, false);
+                self.log_request(
+                    &host,
+                    &path,
+                    &session,
+                    &kinds,
+                    "mask",
+                    &req_hash,
+                    false,
+                    &rule_ids.join(","),
+                );
                 self.emit(&session, &kinds, &host, "mask");
                 RequestOrResponse::Request(req)
             }
@@ -390,7 +424,7 @@ impl AiGuardHandler {
                 parts.headers.remove(HDR_CANARIES);
                 let path = parts.uri.path().to_string();
                 let req = Request::from_parts(parts, Body::from(body_bytes.to_vec()));
-                self.log_request(&host, &path, &addr_key, &[], "passthrough", &req_hash, false);
+                self.log_request(&host, &path, &addr_key, &[], "passthrough", &req_hash, false, "");
                 RequestOrResponse::Request(req)
             }
         }
@@ -470,6 +504,9 @@ impl AiGuardHandler {
 
         // ── 报错泄密：4xx/5xx 才扫，与还原无关 ──
         if status >= 400 {
+            // 错误响应同样视为「请求已完成」（正文读取 + 只读扫描后透传）：
+            // 请求侧挂起的凭据使用在此冲账
+            self.state.flush_vault_use(&client_addr);
             return self.scan_error_response(res, status, session, req_info).await;
         }
 
@@ -481,6 +518,8 @@ impl AiGuardHandler {
             // 非受守护流量且本会话无映射：完全透传
             self.state.vault.unpin(&session);
             log::info!("响应透传（非受守护流量）: session=\"{}\"", session);
+            // 白名单直通（B 路）流量不标记 guarded，其响应走这里——必须冲账
+            self.state.flush_vault_use(&client_addr);
             return res;
         }
 
@@ -499,6 +538,10 @@ impl AiGuardHandler {
                 content_type,
                 content_encoding
             );
+            // MVP 简化：这类响应在**响应头阶段**即透传、正文不进管道，无法等到
+            // 正文流结束；此处视为响应完成并冲账在途凭据使用（偏差可接受：
+            // 完成时刻略早于真实流结束，计数语义不变）
+            self.state.flush_vault_use(&client_addr);
             return res;
         }
 
@@ -512,10 +555,10 @@ impl AiGuardHandler {
         };
 
         if is_sse {
-            self.restore_streaming(res, session, req_info, limits, emit_restored)
+            self.restore_streaming(res, session, req_info, limits, emit_restored, client_addr)
                 .await
         } else {
-            self.restore_full(res, session, req_info, limits, emit_restored)
+            self.restore_full(res, session, req_info, limits, emit_restored, client_addr)
                 .await
         }
     }
@@ -557,6 +600,7 @@ impl AiGuardHandler {
         req_info: ReqInfo,
         limits: RestoreLimits,
         emit_restored: bool,
+        client_addr: String,
     ) -> Response<Body> {
         let (mut parts, body) = res.into_parts();
         parts.headers.remove("content-length");
@@ -570,6 +614,7 @@ impl AiGuardHandler {
             (body, pipeline, reassembler, req_info, false),
             move |(mut body, mut pipeline, mut reass, req_info, done)| {
                 let state = state.clone();
+                let client_addr = client_addr.clone();
                 async move {
                     if done {
                         return None;
@@ -606,6 +651,8 @@ impl AiGuardHandler {
                         Some(Err(e)) => {
                             log::warn!("代理响应流错误: {}", safe_err(&e));
                             state.vault.unpin(pipeline.session());
+                            // 流异常中断也视为「响应完成」：冲账在途凭据使用
+                            state.flush_vault_use(&client_addr);
                             Some((
                                 Err::<Bytes, Box<dyn std::error::Error + Send + Sync>>(Box::new(e)),
                                 (body, pipeline, reass, req_info, true),
@@ -618,6 +665,8 @@ impl AiGuardHandler {
                             self_record(&state, &mut pipeline, &req_info, &final_out);
                             state.clear_session_if(pipeline.session(), clear_at_end);
                             state.vault.unpin(pipeline.session());
+                            // SSE 正常结束 = 响应完成：冲账在途凭据使用（触发点）
+                            state.flush_vault_use(&client_addr);
                             // 还原关闭时收尾补发也不下发（还原文本已进审计，不再给客户端）
                             let emit = if emit_restored {
                                 final_out
@@ -657,6 +706,7 @@ impl AiGuardHandler {
         req_info: ReqInfo,
         limits: RestoreLimits,
         emit_restored: bool,
+        client_addr: String,
     ) -> Response<Body> {
         let (mut parts, body) = res.into_parts();
         let clear_at_end = limits.clear_session_on_stream_end;
@@ -670,6 +720,8 @@ impl AiGuardHandler {
                 self_record(&self.state, &mut pipeline, &req_info, &out);
                 self.state.clear_session_if(pipeline.session(), clear_at_end);
                 self.state.vault.unpin(pipeline.session());
+                // 整段响应完成：冲账在途凭据使用（触发点）
+                self.state.flush_vault_use(&client_addr);
                 parts.headers.remove("content-length");
                 let emit = if emit_restored { out } else { text };
                 Response::from_parts(parts, Body::from(emit.into_bytes()))
@@ -677,6 +729,8 @@ impl AiGuardHandler {
             Err(e) => {
                 log::warn!("读取响应体失败: {}", safe_err(&e));
                 self.state.vault.unpin(&session);
+                // 读取失败同样按「响应已结束」冲账，避免在途记录滞留到 TTL
+                self.state.flush_vault_use(&client_addr);
                 Response::from_parts(parts, Body::from(Vec::new()))
             }
         }
@@ -708,6 +762,8 @@ impl AiGuardHandler {
     }
 
     /// 记录请求日志（不落原文）。
+    ///
+    /// `rule_id`：命中规则 id 的逗号连接串（反馈统计 per-rule 维度用；未命中传空串）。
     fn log_request(
         &self,
         host: &str,
@@ -717,11 +773,12 @@ impl AiGuardHandler {
         action: &str,
         req_hash: &str,
         blocked: bool,
+        rule_id: &str,
     ) {
         let ts = now_ts();
         let kinds_json = serde_json::to_string(kinds).unwrap_or_else(|_| "[]".to_string());
         if let Err(e) = self.state.store.log_request(
-            &ts, host, path, session, &kinds_json, action, req_hash, blocked,
+            &ts, host, path, session, &kinds_json, action, req_hash, blocked, rule_id,
         ) {
             log::warn!("写日志失败: {}", safe_err(&e));
         }
@@ -730,7 +787,89 @@ impl AiGuardHandler {
     /// 直通流量记一条无命中日志。
     fn log_passthrough(&self, host: &str, path: &str, client_addr: SocketAddr) {
         let session = self.state.session_for_addr(&client_addr.to_string());
-        self.log_request(host, path, &session, &[], "passthrough", "", false);
+        self.log_request(host, path, &session, &[], "passthrough", "", false, "");
+    }
+
+    /// 白名单完全直通路径（不脱敏、不拦截）的**凭据值精确扫描**（B 路）。
+    ///
+    /// 直通意味着请求正文**原样出网**——若正文里含保险柜凭据值，即「凭据已外发」，
+    /// 需要最高优先级的轮换提醒。这里对请求体做一次逐条目 `contains` 精确匹配
+    /// （不解析 JSON、不改写正文），命中条目名挂到连接级在途集合，响应完成时
+    /// 冲账（见 [`AppState::flush_vault_use`]）。隐私：只记条目名，绝不含凭据值。
+    ///
+    /// 体量保护（两级）：
+    /// - **缓冲上限 32MiB**：`content-length` 超限的请求不缓冲、不扫描、原样直通；
+    ///   长度缺失或谎报（chunked / 声明小实际大）时用有界收集兜底，超限回 413
+    ///   拒绝——绝不无上界缓冲客户端请求体；
+    /// - **扫描上限 1MiB**：更大正文只缓冲转发、不扫描（逐条目 `contains` 的
+    ///   成本 = 条目数 × 正文长，MiB 级正文 × ≤200 条会阻塞直通路径）；
+    ///   AI 对话载荷是 KB 量级，此上限对真实流量无感。
+    async fn bypass_passthrough_scan(
+        &self,
+        req: Request<Body>,
+        host: &str,
+        path: &str,
+        client_addr: SocketAddr,
+    ) -> RequestOrResponse {
+        const BYPASS_BODY_CAP: usize = 32 * 1024 * 1024;
+        const BYPASS_SCAN_CAP: usize = 1024 * 1024;
+        let declared = req
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
+        if declared.map(|len| len > BYPASS_BODY_CAP as u64).unwrap_or(false) {
+            self.log_passthrough(host, path, client_addr);
+            return RequestOrResponse::Request(req);
+        }
+        let (mut parts, body) = req.into_parts();
+        match collect_body_capped(body, BYPASS_BODY_CAP).await {
+            CollectedBody::Complete(bytes) => {
+                if bytes.len() <= BYPASS_SCAN_CAP {
+                    // lossy UTF-8：凭据值由用户录入（必然是 UTF-8 文本），二进制噪声
+                    // 不会命中；bytes 仍按原样转发，不影响任何字节
+                    let text = String::from_utf8_lossy(&bytes);
+                    let detector = self.state.detector_snapshot();
+                    let entries = detector.scan_locker_names(&text);
+                    if !entries.is_empty() {
+                        self.state.stage_vault_use(
+                            &client_addr.to_string(),
+                            state::VAULT_PLAINTEXT_PATH,
+                            entries,
+                        );
+                    }
+                } else {
+                    // 超扫描上限：只转发不扫描（凭据提醒对此请求不生效）
+                    log::debug!(
+                        "直通请求体 {} 字节超扫描上限，跳过凭据扫描",
+                        bytes.len()
+                    );
+                }
+                self.log_passthrough(host, path, client_addr);
+                RequestOrResponse::Request(Request::from_parts(
+                    parts,
+                    Body::from(bytes),
+                ))
+            }
+            CollectedBody::TooLarge => {
+                // 长度谎报 / chunked 超限：正文已被消费且无法重组，只能拒绝。
+                // 拒绝理由不携带任何请求细节（隐私红线）。
+                log::warn!("直通请求体超缓冲上限（长度缺失或谎报），已拒绝");
+                RequestOrResponse::Response(deny_response(
+                    413,
+                    "payload_too_large",
+                    "request body too large",
+                    false,
+                ))
+            }
+            CollectedBody::Failed(e) => {
+                // body 已被消费且读取失败：与主链路同策略——去 content-length 后转发空体
+                log::warn!("直通路径读取请求体失败: {}", safe_err(&e));
+                parts.headers.remove("content-length");
+                self.log_passthrough(host, path, client_addr);
+                RequestOrResponse::Request(Request::from_parts(parts, Body::from(Vec::new())))
+            }
+        }
     }
 
     /// emit 命中事件给前端（请求侧 PII 主链路）。
@@ -774,6 +913,36 @@ impl AiGuardHandler {
             }
         }
     }
+}
+
+/// 有界请求体收集结果（零新依赖：`Body` 本身是 `Stream`，用已引入的
+/// `futures::StreamExt` 逐块累加，累计长度超过 `cap` 立即停手）。
+enum CollectedBody {
+    /// 未超限，完整正文
+    Complete(Vec<u8>),
+    /// 超过缓冲上限（正文已被消费，调用方只能拒绝，不能重组转发）
+    TooLarge,
+    /// 读取失败（与 `to_bytes` 的错误语义一致）
+    Failed(hudsucker::hyper::Error),
+}
+
+/// 有上界地收集体正文：防「无 content-length 的 chunked 巨体」或
+/// 「谎报小长度实际巨大」的请求把内存打满。
+async fn collect_body_capped(body: Body, cap: usize) -> CollectedBody {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut stream = body;
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(bytes) => {
+                if buf.len() + bytes.len() > cap {
+                    return CollectedBody::TooLarge;
+                }
+                buf.extend_from_slice(&bytes);
+            }
+            Err(e) => return CollectedBody::Failed(e),
+        }
+    }
+    CollectedBody::Complete(buf)
 }
 
 /// 本地代理拒绝响应（访问控制用）：不转发上游、不含任何原文。
@@ -954,6 +1123,10 @@ fn truncate_chars(s: &str, max_bytes: usize) -> String {    if s.len() <= max_by
 /// Block 确认闸门：Block 只对达到确认次数的规则生效（`block_confirms` 按 rule_id 聚合
 /// 确认数与所需次数；校验器类规则运行时下限 2，见 `compile_rule`）；未达标命中照常
 /// 脱敏不拦截。黑名单 / 保险柜 Block 不经此闸（用户显式意图，零误报）。
+///
+/// 输出参数：
+/// - `vault_entries`：命中的保险柜条目键名（去重，A 路使用提醒用）；
+/// - `rule_ids`：命中的规则 id（去重，反馈统计 per-rule 维度落库用）。
 fn scrub_json_value(
     value: &mut Value,
     detector: &Detector,
@@ -963,6 +1136,8 @@ fn scrub_json_value(
     block_confirms: &mut std::collections::HashMap<String, (u32, u32)>,
     hit_count: &mut usize,
     force_mask: bool,
+    vault_entries: &mut Vec<String>,
+    rule_ids: &mut Vec<String>,
 ) {
     match value {
         Value::String(s) => {
@@ -971,6 +1146,16 @@ fn scrub_json_value(
             if !hits.is_empty() {
                 for h in &hits {
                     kinds.push(h.tag.clone());
+                    // 保险柜命中：条目名进 A 路清单（隐私红线：只记键名，绝不含凭据值）
+                    if let Some(name) = &h.locker_entry {
+                        if !vault_entries.contains(name) {
+                            vault_entries.push(name.clone());
+                        }
+                    }
+                    // 规则 id（保险柜命中 rule_id="locker"，不计入规则统计维度）
+                    if !h.rule_id.is_empty() && h.rule_id != "locker" && !rule_ids.contains(&h.rule_id) {
+                        rule_ids.push(h.rule_id.clone());
+                    }
                     if h.action == Action::Block && !force_mask {
                         // 按规则聚合确认数：达到所需次数才允许拦截
                         let e = block_confirms
@@ -986,12 +1171,12 @@ fn scrub_json_value(
         }
         Value::Array(arr) => {
             for v in arr.iter_mut() {
-                scrub_json_value(v, detector, vault, session, kinds, block_confirms, hit_count, force_mask);
+                scrub_json_value(v, detector, vault, session, kinds, block_confirms, hit_count, force_mask, vault_entries, rule_ids);
             }
         }
         Value::Object(map) => {
             for v in map.values_mut() {
-                scrub_json_value(v, detector, vault, session, kinds, block_confirms, hit_count, force_mask);
+                scrub_json_value(v, detector, vault, session, kinds, block_confirms, hit_count, force_mask, vault_entries, rule_ids);
             }
         }
         _ => {}
@@ -1277,6 +1462,185 @@ mod request_body_tests {
         assert!(!state.note_client_process("   ".to_string()));
         assert_eq!(state.client_processes().len(), 1);
     }
+
+    /// 白名单完全直通路径（B 路）的凭据值扫描：正文不改写、原样转发，
+    /// 但命中的保险柜条目名必须挂进在途集合，冲账后进入聚合器。
+    #[tokio::test]
+    async fn test_whitelist_bypass_scans_vault_entries() {
+        let state = test_state();
+        // 录入一条凭据值条目（值避开内置正则形态）
+        let mut cfg = aiguard_core::locker::LockerConfig::default();
+        cfg.entries.push(aiguard_core::locker::LockerEntry {
+            name: "GH_TOKEN".to_string(),
+            value: "ghp-vault-test-1234567890".to_string(),
+            action: "mask".to_string(),
+            enabled: true,
+            kind: "value".to_string(),
+        });
+        cfg.sanitize();
+        let specs = aiguard_core::detector::default_rule_specs();
+        let detector = Detector::from_specs(&specs)
+            .unwrap()
+            .with_locker(&cfg);
+        *state.detector.write().unwrap() = std::sync::Arc::new(detector);
+        *state.locker.write().unwrap() = cfg.clone();
+        // 白名单：域名完全直通（scrub = false）
+        *state.whitelist.write().unwrap() = vec![state::WhitelistEntry {
+            id: "wl-test".to_string(),
+            kind: state::WhitelistKind::Domain,
+            pattern: "chat.deepseek.com".to_string(),
+            scrub: false,
+        }];
+
+        let handler = AiGuardHandler { state: state.clone() };
+        let addr: SocketAddr = "127.0.0.1:51005".parse().unwrap();
+        let payload = r#"{"q":"use ghp-vault-test-1234567890 directly"}"#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("https://chat.deepseek.com/api/chat")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.as_bytes().to_vec()))
+            .unwrap();
+
+        // 完全直通：请求必须原样返回（不脱敏、不拦截）
+        let out = match handler.dispatch_request(addr, req).await {
+            RequestOrResponse::Request(r) => r,
+            RequestOrResponse::Response(res) => {
+                panic!("白名单直通不应拦截，实际状态 {}", res.status())
+            }
+        };
+        let got = to_bytes(out.into_body()).await.unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&got).as_ref(),
+            payload,
+            "直通路径正文必须逐字节原样转发"
+        );
+
+        // 冲账 → 聚合器必须收到 B 路命中（条目名，而非凭据值）
+        state.flush_vault_use(&addr.to_string());
+        let masked = state.vault_notice_debug_state(state::VAULT_MASKED_PATH);
+        let plain = state.vault_notice_debug_state(state::VAULT_PLAINTEXT_PATH);
+        assert!(masked.is_empty(), "脱敏路径不应有记录");
+        assert_eq!(plain, vec!["GH_TOKEN".to_string()], "B 路必须记录命中条目名");
+    }
+
+    /// B 路体量保护：声明 content-length 超 32MiB 的请求必须不缓冲、不扫描、原样直通。
+    ///
+    /// 正文实际很小且**含凭据值**——若超限判断失效（如反向），小正文仍会被缓冲扫描，
+    /// B 路就会出现记录，本测试立即失败（非恒真断言）。
+    #[tokio::test]
+    async fn test_bypass_body_cap_skips_scan() {
+        let state = test_state();
+        let mut cfg = aiguard_core::locker::LockerConfig::default();
+        cfg.entries.push(aiguard_core::locker::LockerEntry {
+            name: "GH_TOKEN".to_string(),
+            value: "ghp-vault-test-1234567890".to_string(),
+            action: "mask".to_string(),
+            enabled: true,
+            kind: "value".to_string(),
+        });
+        cfg.sanitize();
+        let specs = aiguard_core::detector::default_rule_specs();
+        let detector = Detector::from_specs(&specs).unwrap().with_locker(&cfg);
+        *state.detector.write().unwrap() = std::sync::Arc::new(detector);
+        *state.locker.write().unwrap() = cfg.clone();
+        *state.whitelist.write().unwrap() = vec![state::WhitelistEntry {
+            id: "wl-cap".to_string(),
+            kind: state::WhitelistKind::Domain,
+            pattern: "chat.deepseek.com".to_string(),
+            scrub: false,
+        }];
+
+        let handler = AiGuardHandler { state: state.clone() };
+        let addr: SocketAddr = "127.0.0.1:51006".parse().unwrap();
+        let payload = r#"{"q":"use ghp-vault-test-1234567890 directly"}"#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("https://chat.deepseek.com/api/chat")
+            .header("content-type", "application/json")
+            .header("content-length", (32 * 1024 * 1024 + 1).to_string())
+            .body(Body::from(payload.as_bytes().to_vec()))
+            .unwrap();
+
+        let out = match handler.dispatch_request(addr, req).await {
+            RequestOrResponse::Request(r) => r,
+            RequestOrResponse::Response(res) => {
+                panic!("超限直通不应拦截，实际状态 {}", res.status())
+            }
+        };
+        let got = to_bytes(out.into_body()).await.unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&got).as_ref(),
+            payload,
+            "超限路径正文必须原样转发"
+        );
+        state.flush_vault_use(&addr.to_string());
+        assert!(
+            state.vault_notice_debug_state(state::VAULT_PLAINTEXT_PATH).is_empty(),
+            "超限请求不得进入 B 路统计（非空说明超限仍被缓冲扫描）"
+        );
+        assert!(state.vault_notice_debug_state(state::VAULT_MASKED_PATH).is_empty());
+    }
+
+    /// Block 拦截的请求不得进入 A/B 凭据统计（凭据未送达 AI 服务，不计使用）；
+    /// 但 per-rule 反馈统计的数据源要求 block 行仍落 rule_id。
+    #[tokio::test]
+    async fn test_block_403_does_not_stage_vault_entries() {
+        let state = test_state();
+        // 凭据条目 + 激进预设（银行卡 Block，确认数 2）
+        let mut cfg = aiguard_core::locker::LockerConfig::default();
+        cfg.entries.push(aiguard_core::locker::LockerEntry {
+            name: "GH_TOKEN".to_string(),
+            value: "ghp-vault-test-1234567890".to_string(),
+            action: "mask".to_string(),
+            enabled: true,
+            kind: "value".to_string(),
+        });
+        cfg.sanitize();
+        let specs = aiguard_core::detector::apply_preset_to_builtin(
+            aiguard_core::detector::default_rule_specs(),
+            aiguard_core::detector::PRESET_AGGRESSIVE,
+        );
+        let detector = Detector::from_specs(&specs).unwrap().with_locker(&cfg);
+        *state.detector.write().unwrap() = std::sync::Arc::new(detector);
+        *state.locker.write().unwrap() = cfg.clone();
+
+        let handler = AiGuardHandler { state: state.clone() };
+        let addr: SocketAddr = "127.0.0.1:51007".parse().unwrap();
+        // 同一体：两张合法卡（触发 Block）+ 一个凭据值（若误 stage 会被本测试捕获）
+        let payload = r#"{"messages":[{"role":"user","content":"卡号4242424242424242，另一张是5555555555554444，token=ghp-vault-test-1234567890"}]}"#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("https://chat.deepseek.com/v1/chat/completions")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.as_bytes().to_vec()))
+            .unwrap();
+
+        match handler.dispatch_request(addr, req).await {
+            RequestOrResponse::Response(res) => {
+                assert_eq!(res.status().as_u16(), 403, "两张合法卡必须触发拦截")
+            }
+            RequestOrResponse::Request(_) => panic!("两张合法卡应触发 Block，不应放行"),
+        }
+        state.flush_vault_use(&addr.to_string());
+        assert!(
+            state.vault_notice_debug_state(state::VAULT_MASKED_PATH).is_empty(),
+            "Block 请求的凭据命中不得进入 A 路统计"
+        );
+        assert!(
+            state.vault_notice_debug_state(state::VAULT_PLAINTEXT_PATH).is_empty(),
+            "Block 请求不得进入 B 路统计"
+        );
+        // per-rule 统计的数据源：block 行也落命中的规则 id
+        let logs = state.store.list_requests(10).unwrap();
+        assert_eq!(logs.len(), 1, "Block 请求应落一条 request_log");
+        assert_eq!(logs[0].action, "block");
+        assert!(
+            logs[0].rule_id.contains("builtin.bankcard"),
+            "block 行应落命中的规则 id，实际: {}",
+            logs[0].rule_id
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1300,6 +1664,8 @@ mod block_confirm_gate_tests {
             std::collections::HashMap::new();
         let mut kinds: Vec<String> = Vec::new();
         let mut hit_count = 0usize;
+        let mut vault_entries: Vec<String> = Vec::new();
+        let mut rule_ids: Vec<String> = Vec::new();
         scrub_json_value(
             body,
             detector,
@@ -1309,6 +1675,8 @@ mod block_confirm_gate_tests {
             &mut block_confirms,
             &mut hit_count,
             false,
+            &mut vault_entries,
+            &mut rule_ids,
         );
         block_confirms.values().any(|(count, need)| count >= need)
     }

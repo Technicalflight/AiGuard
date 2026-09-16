@@ -48,6 +48,10 @@ import {
   setSecurityPolicy as apiSetSecurityPolicy,
   listSecurityEvents,
   clearSecurityEvents,
+  labelEvent,
+  fpStats,
+  onVaultNotice,
+  FpStats,
   clearSessions,
   runLinkCheck,
   onSecurityAlert,
@@ -589,6 +593,120 @@ function Badge({ text, tone }: { text: string; tone: "green" | "amber" | "red" |
   // tb()：这里的文案有的来自前端 t()（已是当前语言），有的直接来自后端（中文）。
   // tb() 对不含中文的输入原样返回，因此两种来源都可以安全地过一遍。
   return <span className={`badge ${tone}`}>{tb(text)}</span>;
+}
+
+/**
+ * 反馈标签按钮组：误报（选中 = 琥珀）/ 确认（选中 = 绿）。
+ * 再次点击已选中的标签 = 撤销（回写 "none"）。stopPropagation 避免触发行点击（详情弹窗）。
+ * kind: "request" → 请求/审计页（request_log 行，seq 传 id），
+ *       "audit"  → 防护命中日志（audit_events 行，seq 传 seq）。
+ */
+function LabelButtons({
+  current,
+  kind,
+  seq,
+  onLabeled,
+}: {
+  current: string;
+  kind: "request" | "audit";
+  seq: number;
+  onLabeled: () => void;
+}) {
+  // 提交失败就地提示：不弹窗、不阻塞，点下一次会重试；本地状态不变，刷新即见后端真值
+  const [failed, setFailed] = useState(false);
+  const mark = (label: "fp" | "tn") => {
+    const next = current === label ? "none" : label;
+    void labelEvent(kind, seq, next)
+      .then(() => {
+        setFailed(false);
+        onLabeled();
+      })
+      .catch(() => {
+        setFailed(true);
+      });
+  };
+  return (
+    <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+      <button
+        className={`btn mini ${current === "fp" ? "warn" : ""}`}
+        title={t("标记为误报")}
+        onClick={(e) => {
+          e.stopPropagation();
+          mark("fp");
+        }}
+      >
+        {t("误报")}
+      </button>
+      <button
+        className={`btn mini ${current === "tn" ? "ok" : ""}`}
+        title={t("确认为真实风险")}
+        onClick={(e) => {
+          e.stopPropagation();
+          mark("tn");
+        }}
+      >
+        {t("确认")}
+      </button>
+      {failed && (
+        <span className="muted" style={{ fontSize: 12 }}>
+          {t("反馈提交失败")}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** 首页横幅里的一条凭据使用提醒（已按（路径,条目名）合并；plain = 明文外发）。 */
+type VaultBannerItem = {
+  key: string;
+  name: string;
+  count: number;
+  plain: boolean;
+};
+
+/**
+ * 首页顶部的凭据使用提醒横幅。
+ * A 路（脱敏后放行）= 绿色（信息级：已脱敏，无需处理）；B 路（明文随白名单直通外发）= 红色 + 建议轮换。
+ * 条目名是用户在凭据保险库里起的名字，不是凭据值——payload 里永远不会有值。
+ */
+function VaultNoticeBanner({
+  items,
+  dismissed,
+  onDismiss,
+}: {
+  items: VaultBannerItem[];
+  dismissed: Set<string>;
+  onDismiss: (key: string) => void;
+}) {
+  const visible = items.filter((n) => !dismissed.has(n.key));
+  if (visible.length === 0) return null;
+  return (
+    <div style={{ margin: "0 18px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+      {visible.map((n) => (
+        <div
+          key={n.key}
+          className={`notice ${n.plain ? "error" : ""}`}
+          role="status"
+          style={{ alignItems: "flex-start" }}
+        >
+          <span style={{ flex: 1, minWidth: 0 }}>
+            {n.plain ? t("凭据已外发") : t("凭据已脱敏")}
+            {t("：")}
+            <span className="mono">{tb(n.name)}</span>
+            {t("（")}
+            {n.count}
+            {n.plain ? t("次外发") : t("次")}
+            {t("）")}
+            {" · "}
+            {n.plain ? t("建议尽快轮换该凭据") : t("已脱敏后放行，无需处理")}
+          </span>
+          <button className="btn mini" style={{ flexShrink: 0 }} onClick={() => onDismiss(n.key)}>
+            {t("关闭")}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -1397,6 +1515,7 @@ function RequestsPage() {
                 <th style={{ width: "11%" }}>{t("命中类型")}</th>
                 <th style={{ width: 76 }}>{t("动作")}</th>
                 <th style={{ width: 110 }}>{t("哈希")}</th>
+                <th style={{ width: 132 }}>{t("反馈")}</th>
                 <th style={{ width: 84 }}>{t("详情")}</th>
               </tr>
             </thead>
@@ -1422,6 +1541,16 @@ function RequestsPage() {
                     <ActionBadge action={l.action} />
                   </td>
                   <td className="muted mono">{l.req_hash || "—"}</td>
+                  <td>
+                    <LabelButtons
+                      current={l.user_label || "none"}
+                      kind="request"
+                      seq={l.id}
+                      onLabeled={() => {
+                        void load();
+                      }}
+                    />
+                  </td>
                   <td>
                     <button
                       className="btn mini"
@@ -3522,6 +3651,7 @@ function SecurityPage() {
                 <th style={{ width: 84 }}>{t("严重度")}</th>
                 <th>{t("说明")}</th>
                 <th style={{ width: 170 }}>{t("会话")}</th>
+                <th style={{ width: 132 }}>{t("反馈")}</th>
               </tr>
             </thead>
             <tbody>
@@ -3557,6 +3687,17 @@ function SecurityPage() {
                     {tb(e.evidence)}
                   </td>
                   <td className="muted mono">{e.sid}</td>
+                  <td>
+                    {/* audit_events 行：kind="audit"，让 per_signal 统计有数据源 */}
+                    <LabelButtons
+                      current={e.user_label || "none"}
+                      kind="audit"
+                      seq={e.seq}
+                      onLabeled={() => {
+                        void refresh();
+                      }}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -3581,6 +3722,17 @@ function AuditPage() {
   const [detail, setDetail] = useState<RequestLog | null>(null);
   const [rules, setRules] = useState<RuleSpec[]>([]);
   const PAGE_SIZE = 20;
+  // 反馈统计（近 30 天）与信号展示名：进页拉一次，打标签后随列表一起刷新
+  const [fp, setFp] = useState<FpStats | null>(null);
+  const [points, setPoints] = useState<SecurityPoint[]>([]);
+
+  const loadFp = useCallback(async () => {
+    try {
+      setFp(await fpStats());
+    } catch {
+      // 浏览器预览走 MOCK
+    }
+  }, []);
 
   useEffect(() => {
     getRules()
@@ -3612,6 +3764,13 @@ function AuditPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    void loadFp();
+    getSecurityPoints()
+      .then(setPoints)
+      .catch(() => {});
+  }, [loadFp]);
+
   const switchDate = (d: string) => {
     setDate(d);
     setPage(1); // 切换日期回到第一页
@@ -3628,6 +3787,86 @@ function AuditPage() {
         <ShieldIcon size={18} />
         {t("出于隐私保护，日志仅记录命中类型与哈希，不保存任何原文")}
       </div>
+      {fp && (fp.per_signal.length > 0 || fp.per_rule.length > 0) && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+            <strong>{t("反馈统计")}</strong>
+            <span className="muted" style={{ fontSize: 12 }}>{t("近 30 天")}</span>
+          </div>
+          <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 300 }}>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                {t("按防护点")}
+              </div>
+              {fp.per_signal.length === 0 ? (
+                <div className="empty">{t("暂无记录")}</div>
+              ) : (
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>{t("防护点")}</th>
+                    <th style={{ width: 64 }}>{t("命中")}</th>
+                    <th style={{ width: 64 }}>{t("误报")}</th>
+                    <th style={{ width: 64 }}>{t("确认")}</th>
+                    <th style={{ width: 72 }}>{t("FP 率")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fp.per_signal.map((s) => (
+                    <tr key={s.key}>
+                      {/* 信号展示名取防护点卡片的中文名（tb() 负责英文界面）；
+                          未知信号原样显示标识符。fixed 布局下截断，title 悬停看全文 */}
+                      <td title={tb(points.find((p) => p.signal === s.key)?.name ?? s.key)}>
+                        {tb(points.find((p) => p.signal === s.key)?.name ?? s.key)}
+                      </td>
+                      <td>{s.hits}</td>
+                      <td>{s.fp}</td>
+                      <td>{s.tn}</td>
+                      <td>{s.hits > 0 ? `${Math.round((s.fp / s.hits) * 100)}%` : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              )}
+            </div>
+            <div style={{ flex: 1, minWidth: 300 }}>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                {t("按规则")}
+              </div>
+              {fp.per_rule.length === 0 ? (
+                <div className="empty">{t("暂无记录")}</div>
+              ) : (
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>{t("规则")}</th>
+                    <th style={{ width: 64 }}>{t("命中")}</th>
+                    <th style={{ width: 64 }}>{t("误报")}</th>
+                    <th style={{ width: 64 }}>{t("确认")}</th>
+                    <th style={{ width: 72 }}>{t("FP 率")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fp.per_rule.map((r) => (
+                    <tr key={r.key}>
+                      {/* 规则名是用户数据（自定义规则可能是任意中文），过 tb()；
+                          未知 id（如规则已删除）原样显示。fixed 布局下截断，title 悬停看全文 */}
+                      <td title={tb(rules.find((x) => x.id === r.key)?.name ?? r.key)}>
+                        {tb(rules.find((x) => x.id === r.key)?.name ?? r.key)}
+                      </td>
+                      <td>{r.hits}</td>
+                      <td>{r.fp}</td>
+                      <td>{r.tn}</td>
+                      <td>{r.hits > 0 ? `${Math.round((r.fp / r.hits) * 100)}%` : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
         <span className="muted">{t("日期筛选")}</span>
         <DatePicker
@@ -3658,6 +3897,7 @@ function AuditPage() {
                 <th style={{ width: "11%" }}>{t("命中类型")}</th>
                 <th style={{ width: 76 }}>{t("动作")}</th>
                 <th style={{ width: 110 }}>{t("请求哈希")}</th>
+                <th style={{ width: 132 }}>{t("反馈")}</th>
                 <th style={{ width: 84 }}>{t("详情")}</th>
               </tr>
             </thead>
@@ -3677,6 +3917,17 @@ function AuditPage() {
                     <ActionBadge action={l.action} />
                   </td>
                   <td className="muted mono">{l.req_hash || "—"}</td>
+                  <td>
+                    <LabelButtons
+                      current={l.user_label || "none"}
+                      kind="request"
+                      seq={l.id}
+                      onLabeled={() => {
+                        void load();
+                        void loadFp();
+                      }}
+                    />
+                  </td>
                   <td>
                     <button
                       className="btn mini"
@@ -5200,6 +5451,9 @@ export default function App() {
   const [lang, setLang] = useState<Lang>("zh");
   const [wizardOpen, setWizardOpen] = useState(false);
   const [closeAskOpen, setCloseAskOpen] = useState(false);
+  // 凭据使用提醒（A/B 两路）：按（路径,条目名）跨轮合并累计次数；每条可单独关闭
+  const [vaultNotices, setVaultNotices] = useState<VaultBannerItem[]>([]);
+  const [vaultDismissed, setVaultDismissed] = useState<Set<string>>(new Set());
   const restoreEnabled = stats?.restore_enabled ?? true;
 
   // 启动时读语言与向导状态。两者失败都不该影响应用启动，因此整体吞掉异常。
@@ -5227,6 +5481,33 @@ export default function App() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     onCloseRequested(() => setCloseAskOpen(true)).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  // 凭据使用提醒事件：后端已有 600s 冷却，这里只负责跨轮合并展示与逐条关闭。
+  // 隐私红线：payload 只有条目名 / 次数 / 时间戳，绝无凭据值或请求内容。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    onVaultNotice((payload) => {
+      const plain = payload.path === "plaintext";
+      setVaultNotices((prev) => {
+        const next = [...prev];
+        for (const e of payload.entries) {
+          const key = `${payload.path}\u0001${e.name}`;
+          const idx = next.findIndex((n) => n.key === key);
+          if (idx >= 0) {
+            next[idx] = { ...next[idx], count: next[idx].count + e.count };
+          } else {
+            next.push({ key, name: e.name, count: e.count, plain });
+          }
+        }
+        return next;
+      });
+    }).then((fn) => {
       unlisten = fn;
     });
     return () => {
@@ -5409,6 +5690,19 @@ export default function App() {
               {t("关闭")}
             </button>
           </div>
+        )}
+        {page === "home" && (
+          <VaultNoticeBanner
+            items={vaultNotices}
+            dismissed={vaultDismissed}
+            onDismiss={(key) =>
+              setVaultDismissed((prev) => {
+                const next = new Set(prev);
+                next.add(key);
+                return next;
+              })
+            }
+          />
         )}
         {page === "home" && (
           <HomePage

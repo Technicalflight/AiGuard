@@ -159,6 +159,9 @@ pub struct Hit {
     pub min_confirm: u32,
     /// 命中是否通过语义校验器（语义 / 保险柜命中为 false）
     pub validated: bool,
+    /// 命中的保险柜条目键名（仅保险柜命中非空）。
+    /// 供「凭据使用提醒」按条目聚合，只含键名、绝不含凭据值。
+    pub locker_entry: Option<String>,
 }
 
 /// 内置标签 → 语义校验器映射。
@@ -434,6 +437,14 @@ impl Detector {
         self.collect_hits(text)
     }
 
+    /// 凭据值命中条目名清单（去重），委托给保险柜引擎的轻量精确匹配。
+    ///
+    /// 供白名单直通路径使用：正文不做脱敏改写、仍需统计「哪些凭据值原样出站」，
+    /// 以触发凭据轮换提醒。返回只含条目键名，绝不携带凭据值。
+    pub fn scan_locker_names(&self, text: &str) -> Vec<String> {
+        self.locker.scan_entry_names(text)
+    }
+
     /// 扫描并用 `replace(原文, 标签)` 的返回值替换每个命中区间。
     /// 返回 (替换后的文本, 命中列表)。
     ///
@@ -502,6 +513,7 @@ impl Detector {
                     rule_id: rule.id.clone(),
                     min_confirm: rule.min_confirm,
                     validated: rule.validated,
+                    locker_entry: None,
                 });
             }
         }
@@ -520,6 +532,7 @@ impl Detector {
                 rule_id: String::new(),
                 min_confirm: 1,
                 validated: false,
+                locker_entry: None,
             });
         }
         // 保险柜命中（用户录入敏感值的精确匹配）：动作按条目（默认 Mask，可 Block）。
@@ -536,6 +549,8 @@ impl Detector {
                 rule_id: "locker".to_string(),
                 min_confirm: 1,
                 validated: false,
+                // 条目键名随命中透出，供「凭据使用提醒」按条目聚合
+                locker_entry: Some(h.name),
             });
         }
         // 按 start 升序；同起点时更长的命中优先，避免同一文本被两个规则各报一次后短者占用区间

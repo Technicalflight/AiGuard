@@ -115,6 +115,18 @@ const TABLE: &[(&str, &str, &str)] = &[
         "当前版本 {}。可在设置页的「更新检查」查看发布说明与下载地址。",
         "You are running {}. See Settings → Update check for release notes and the download link.",
     ),
+    // —— 桌面通知：凭据外发提醒（明文路径）——
+    // 隐私红线：只拼接凭据入口名与次数，绝不含凭据值 / 请求内容。
+    (
+        "notify.vault.title",
+        "{} · 凭据已外发",
+        "{} · credential sent in plaintext",
+    ),
+    (
+        "notify.vault.body",
+        "「{}」以明文随请求外发，共 {} 次，建议尽快轮换该凭据。",
+        "'{}' was sent with requests in plaintext {} times in total. Rotate this credential soon.",
+    ),
 ];
 
 /// 信号语义名 → 英文展示名。中文展示名以 core 的 SIGNAL_CATALOG 为唯一真相。
@@ -299,6 +311,30 @@ pub fn update_notify(lang: Language, current: &str, latest: &str) -> (String, St
         &[tr(lang, "app.name"), latest.to_string()],
     );
     let body = fmt(&tr(lang, "notify.update.body"), &[current.to_string()]);
+    (title, body)
+}
+
+/// 凭据外发提醒（明文路径 B）的系统通知文案（纯函数，便于单测）。
+///
+/// **隐私红线**：`VaultNotice` 里只有凭据**入口名**（用户自己起的名字）与次数 /
+/// 时间戳，绝无凭据值或请求内容——这里只拼接这两类信息，脱敏要求与审计日志同级。
+/// 入口名全部列出（单连接在途记录受 `VAULT_PENDING_MAX` 约束，不会无限长），
+/// 次数取各条目计数之和。
+pub fn vault_notice_text(lang: Language, notice: &crate::state::VaultNotice) -> (String, String) {
+    let title = fmt(&tr(lang, "notify.vault.title"), &[tr(lang, "app.name")]);
+    // 列表连接符随语言：中文顿号、英文逗号
+    let joiner = match lang {
+        Language::Zh => "、",
+        Language::En => ", ",
+    };
+    let names = notice
+        .entries
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect::<Vec<_>>()
+        .join(joiner);
+    let total: u64 = notice.entries.iter().map(|e| e.count).sum();
+    let body = fmt(&tr(lang, "notify.vault.body"), &[names, total.to_string()]);
     (title, body)
 }
 
@@ -616,5 +652,40 @@ mod tests {
     #[test]
     fn test_unknown_key_returns_key_itself() {
         assert_eq!(tr(Language::En, "no.such.key"), "no.such.key");
+    }
+
+    /// 凭据外发提醒文案：双语言形状 + 隐私红线（绝无凭据值）。
+    #[test]
+    fn test_vault_notice_text_shapes() {
+        let notice = crate::state::VaultNotice {
+            path: crate::state::VAULT_PLAINTEXT_PATH.into(),
+            entries: vec![
+                crate::state::VaultNoticeEntry {
+                    name: "GH_TOKEN".into(),
+                    count: 3,
+                    first_ts: 0.0,
+                },
+                crate::state::VaultNoticeEntry {
+                    name: "OPENAI_KEY".into(),
+                    count: 2,
+                    first_ts: 0.0,
+                },
+            ],
+        };
+        let (zh_title, zh_body) = vault_notice_text(Language::Zh, &notice);
+        assert!(zh_title.contains("凭据已外发"), "{}", zh_title);
+        assert!(zh_title.contains("AI"), "标题应带应用名: {}", zh_title);
+        assert!(zh_body.contains("GH_TOKEN、OPENAI_KEY"), "{}", zh_body);
+        assert!(zh_body.contains("5"), "总次数应出现: {}", zh_body);
+        assert!(zh_body.contains("轮换"), "{}", zh_body);
+
+        let (en_title, en_body) = vault_notice_text(Language::En, &notice);
+        assert!(en_title.contains("plaintext"), "{}", en_title);
+        assert!(en_body.contains("GH_TOKEN, OPENAI_KEY"), "{}", en_body);
+        assert!(en_body.contains("Rotate"), "{}", en_body);
+
+        // 隐私红线：文案只收入口名，不可能出现凭据值形态
+        assert!(!zh_body.contains("ghp_"), "{}", zh_body);
+        assert!(!en_body.contains("ghp_"), "{}", en_body);
     }
 }

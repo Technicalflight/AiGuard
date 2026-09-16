@@ -34,6 +34,14 @@ export interface RequestLog {
   action: string; // mask / block / warn / passthrough
   req_hash: string;
   blocked: number;
+  /** 用户反馈标签：none=未标 / fp=误报 / tn=确认 */
+  user_label: string;
+  /** 打标签的 Unix 秒（0 = 未标） */
+  label_ts: number;
+  /** 命中规则 id（多个逗号分隔，如 builtin.bankcard；直通行为空） */
+  rule_id: string;
+  /** 命中时的规则版本 */
+  rule_ver: string;
 }
 
 export interface DashboardStats {
@@ -280,6 +288,8 @@ export interface SecurityEventRow {
   probe_id: string;
   request_hash: string;
   response_hash: string;
+  /** 用户反馈标签：none=未标 / fp=误报 / tn=确认 */
+  user_label: string;
 }
 
 // ─────────── MOCK 数据（纯浏览器预览用） ───────────
@@ -296,13 +306,13 @@ const MOCK_STATS: DashboardStats = {
 };
 
 const MOCK_LOGS: RequestLog[] = [
-  { id: 128, ts: "1749705600", host: "api.openai.com", path: "/v1/chat/completions", session: "127.0.0.1:52411", kinds: '["PHONE","EMAIL"]', action: "mask", req_hash: "a1b2c3d4e5f60718", blocked: 0 },
-  { id: 127, ts: "1749705480", host: "api.anthropic.com", path: "/v1/messages", session: "127.0.0.1:52390", kinds: '["IDCARD"]', action: "block", req_hash: "9f8e7d6c5b4a3210", blocked: 1 },
-  { id: 126, ts: "1749705300", host: "api.deepseek.com", path: "/chat/completions", session: "127.0.0.1:52364", kinds: '["APIKEY"]', action: "mask", req_hash: "1122334455667788", blocked: 0 },
-  { id: 125, ts: "1749705100", host: "dashscope.aliyuncs.com", path: "/api/v1/services/aigc", session: "127.0.0.1:52341", kinds: "[]", action: "passthrough", req_hash: "", blocked: 0 },
-  { id: 124, ts: "1749704920", host: "api.moonshot.cn", path: "/v1/chat/completions", session: "127.0.0.1:52318", kinds: '["BANKCARD"]', action: "mask", req_hash: "deadbeefcafebabe", blocked: 0 },
-  { id: 123, ts: "1749704700", host: "api.openai.com", path: "/v1/embeddings", session: "127.0.0.1:52301", kinds: "[]", action: "passthrough", req_hash: "", blocked: 0 },
-  { id: 122, ts: "1749704400", host: "open.bigmodel.cn", path: "/api/paas/v4/chat", session: "127.0.0.1:52286", kinds: '["IP"]', action: "warn", req_hash: "0f1e2d3c4b5a6978", blocked: 0 },
+  { id: 128, ts: "1749705600", host: "api.openai.com", path: "/v1/chat/completions", session: "127.0.0.1:52411", kinds: '["PHONE","EMAIL"]', action: "mask", req_hash: "a1b2c3d4e5f60718", blocked: 0, user_label: "none", label_ts: 0, rule_id: "builtin.phone,builtin.email", rule_ver: "v7" },
+  { id: 127, ts: "1749705480", host: "api.anthropic.com", path: "/v1/messages", session: "127.0.0.1:52390", kinds: '["IDCARD"]', action: "block", req_hash: "9f8e7d6c5b4a3210", blocked: 1, user_label: "fp", label_ts: 1749705600, rule_id: "builtin.idcard", rule_ver: "v7" },
+  { id: 126, ts: "1749705300", host: "api.deepseek.com", path: "/chat/completions", session: "127.0.0.1:52364", kinds: '["APIKEY"]', action: "mask", req_hash: "1122334455667788", blocked: 0, user_label: "tn", label_ts: 1749705540, rule_id: "builtin.apikey", rule_ver: "v7" },
+  { id: 125, ts: "1749705100", host: "dashscope.aliyuncs.com", path: "/api/v1/services/aigc", session: "127.0.0.1:52341", kinds: "[]", action: "passthrough", req_hash: "", blocked: 0, user_label: "none", label_ts: 0, rule_id: "", rule_ver: "" },
+  { id: 124, ts: "1749704920", host: "api.moonshot.cn", path: "/v1/chat/completions", session: "127.0.0.1:52318", kinds: '["BANKCARD"]', action: "mask", req_hash: "deadbeefcafebabe", blocked: 0, user_label: "none", label_ts: 0, rule_id: "builtin.bankcard", rule_ver: "v7" },
+  { id: 123, ts: "1749704700", host: "api.openai.com", path: "/v1/embeddings", session: "127.0.0.1:52301", kinds: "[]", action: "passthrough", req_hash: "", blocked: 0, user_label: "none", label_ts: 0, rule_id: "", rule_ver: "" },
+  { id: 122, ts: "1749704400", host: "open.bigmodel.cn", path: "/api/paas/v4/chat", session: "127.0.0.1:52286", kinds: '["IP"]', action: "warn", req_hash: "0f1e2d3c4b5a6978", blocked: 0, user_label: "none", label_ts: 0, rule_id: "builtin.ip", rule_ver: "v7" },
 ];
 
 const MOCK_RULES: RuleSpec[] = [
@@ -373,11 +383,11 @@ const MOCK_SECURITY_POLICY: SecurityPolicy = {
 };
 
 const MOCK_SECURITY_EVENTS: SecurityEventRow[] = [
-  { seq: 9, ts: "1749705600", sid: "conv:api.openai.com:chat-88", host: "api.openai.com", method: "POST", path: "/v1/chat/completions", signal_type: "response_poison", severity: "HIGH", evidence: "hidden_unicode: U+202E (count=1) [双向覆盖符]", probe_id: "", request_hash: "a1b2c3d4e5f60718", response_hash: "1122334455667788" },
-  { seq: 8, ts: "1749705480", sid: "conv:api.openai.com:chat-88", host: "api.openai.com", method: "POST", path: "/v1/chat/completions", signal_type: "response_poison", severity: "MEDIUM", evidence: "credential_echo:github_token len=37 sha256=deadbeefcafebabe", probe_id: "", request_hash: "a1b2c3d4e5f60718", response_hash: "1122334455667788" },
-  { seq: 7, ts: "1749705360", sid: "key:api.deepseek.com:9f8e7d6c", host: "api.deepseek.com", method: "POST", path: "/chat/completions", signal_type: "dangerous_action", severity: "LOW", evidence: "递归删除根目录/家目录: rm -rf /", probe_id: "", request_hash: "1122334455667788", response_hash: "deadbeefcafebabe" },
-  { seq: 6, ts: "1749705240", sid: "hdr:api.moonshot.cn:t-42", host: "api.moonshot.cn", method: "POST", path: "/v1/chat/completions", signal_type: "identity_swap", severity: "HIGH", evidence: "model_mismatch: req=gpt-4o resp=claude-3-5-sonnet", probe_id: "", request_hash: "0f1e2d3c4b5a6978", response_hash: "9f8e7d6c5b4a3210" },
-  { seq: 5, ts: "1749705120", sid: "conv:api.openai.com:chat-87", host: "api.openai.com", method: "POST", path: "/v1/chat/completions", signal_type: "error_leak", severity: "CRITICAL", evidence: "sk_prefix_secret len=29 sha256=abcdef0123456789", probe_id: "", request_hash: "5a5b5c5d5e5f6061", response_hash: "6263646566676869" },
+  { seq: 9, ts: "1749705600", sid: "conv:api.openai.com:chat-88", host: "api.openai.com", method: "POST", path: "/v1/chat/completions", signal_type: "response_poison", severity: "HIGH", evidence: "hidden_unicode: U+202E (count=1) [双向覆盖符]", probe_id: "", request_hash: "a1b2c3d4e5f60718", response_hash: "1122334455667788", user_label: "none" },
+  { seq: 8, ts: "1749705480", sid: "conv:api.openai.com:chat-88", host: "api.openai.com", method: "POST", path: "/v1/chat/completions", signal_type: "response_poison", severity: "MEDIUM", evidence: "credential_echo:github_token len=37 sha256=deadbeefcafebabe", probe_id: "", request_hash: "a1b2c3d4e5f60718", response_hash: "1122334455667788", user_label: "fp" },
+  { seq: 7, ts: "1749705360", sid: "key:api.deepseek.com:9f8e7d6c", host: "api.deepseek.com", method: "POST", path: "/chat/completions", signal_type: "dangerous_action", severity: "LOW", evidence: "递归删除根目录/家目录: rm -rf /", probe_id: "", request_hash: "1122334455667788", response_hash: "deadbeefcafebabe", user_label: "tn" },
+  { seq: 6, ts: "1749705240", sid: "hdr:api.moonshot.cn:t-42", host: "api.moonshot.cn", method: "POST", path: "/v1/chat/completions", signal_type: "identity_swap", severity: "HIGH", evidence: "model_mismatch: req=gpt-4o resp=claude-3-5-sonnet", probe_id: "", request_hash: "0f1e2d3c4b5a6978", response_hash: "9f8e7d6c5b4a3210", user_label: "none" },
+  { seq: 5, ts: "1749705120", sid: "conv:api.openai.com:chat-87", host: "api.openai.com", method: "POST", path: "/v1/chat/completions", signal_type: "error_leak", severity: "CRITICAL", evidence: "sk_prefix_secret len=29 sha256=abcdef0123456789", probe_id: "", request_hash: "5a5b5c5d5e5f6061", response_hash: "6263646566676869", user_label: "none" },
 ];
 
 // ─────────── 对外 API ───────────
@@ -565,6 +575,34 @@ export async function onPiiDetected(
   return unlisten;
 }
 
+// ─────────── 凭据使用与轮换提醒（隐私红线：payload 只有条目名 / 次数 / 时间戳） ───────────
+
+export interface VaultNoticeEntry {
+  /** 凭据入口名（用户在凭据保险库里起的名字），绝无凭据值 */
+  name: string;
+  count: number;
+  /** 本轮首次使用的 Unix 秒 */
+  first_ts: number;
+}
+
+export interface VaultNoticePayload {
+  /** "masked"（脱敏且放行）| "plaintext"（明文随白名单直通外发） */
+  path: string;
+  entries: VaultNoticeEntry[];
+}
+
+/** 订阅凭据使用提醒（浏览器环境返回空函数）。 */
+export async function onVaultNotice(
+  handler: (payload: VaultNoticePayload) => void
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<VaultNoticePayload>("vault-notice", (e) => {
+    handler(e.payload);
+  });
+  return unlisten;
+}
+
 // ─────────── 防护中心 API ───────────
 
 export async function getSecurityPoints(): Promise<SecurityPoint[]> {
@@ -590,6 +628,59 @@ export async function listSecurityEvents(limit = 100): Promise<SecurityEventRow[
 export async function clearSecurityEvents(): Promise<void> {
   if (!isTauri()) return;
   return tauriInvoke<void>("clear_security_events");
+}
+
+// ─────────── 误报反馈闭环 ───────────
+
+/** 给一条日志打反馈标签。kind: "request"（请求/审计页）| "audit"（防护命中日志）；
+ *  label: "fp"（误报）| "tn"（确认）| "none"（撤销）。 */
+export async function labelEvent(
+  kind: "request" | "audit",
+  seq: number,
+  label: "fp" | "tn" | "none"
+): Promise<void> {
+  if (!isTauri()) return;
+  return tauriInvoke<void>("label_event", { kind, seq, label });
+}
+
+export interface FpSignalStat {
+  /** 信号名（error_leak / response_poison / ...） */
+  key: string;
+  hits: number;
+  fp: number;
+  tn: number;
+}
+
+export interface FpRuleStat {
+  /** 规则 id（builtin.bankcard / custom.xxx） */
+  key: string;
+  hits: number;
+  fp: number;
+  tn: number;
+}
+
+export interface FpStats {
+  per_signal: FpSignalStat[];
+  per_rule: FpRuleStat[];
+}
+
+/** 误报反馈统计（近 30 天窗口）。 */
+export async function fpStats(): Promise<FpStats> {
+  if (!isTauri()) {
+    return {
+      per_signal: [
+        { key: "response_poison", hits: 2, fp: 1, tn: 0 },
+        { key: "dangerous_action", hits: 1, fp: 0, tn: 1 },
+      ],
+      per_rule: [
+        { key: "builtin.idcard", hits: 1, fp: 1, tn: 0 },
+        { key: "builtin.apikey", hits: 1, fp: 0, tn: 1 },
+        { key: "builtin.phone", hits: 1, fp: 0, tn: 0 },
+        { key: "builtin.email", hits: 1, fp: 0, tn: 0 },
+      ],
+    };
+  }
+  return tauriInvoke<FpStats>("fp_stats");
 }
 
 /** 应急：清空全部内存会话映射，返回被清理的会话数。 */
