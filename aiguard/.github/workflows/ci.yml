@@ -128,6 +128,25 @@ jobs:
             exit $code
           }
 
+  # 请求侧性能护栏：core 检测基准 + p99 门禁（AIGUARD_BENCH_MAX_P99_MS）。
+  # 阈值 5ms 的依据：本机实测 p99 约 2ms，而 CI runner 是共享 vCPU、单核性能
+  # 抖动大，若按本机 2ms 卡门禁会随机误报；放宽到 5ms 只拦「数量级的性能回退」
+  # （如误引入逐字符回溯的正则），不拦环境噪声。超 5ms 一律按检测热路径劣化回归处理。
+  bench:
+    name: 请求侧性能基准（p99 门禁）
+    runs-on: ubuntu-latest
+    env:
+      AIGUARD_BENCH_MAX_P99_MS: "5"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: 运行 core 检测基准（任一项 p99 超 5ms 即失败）
+        run: cargo bench -p aiguard-core
+
   # 平台化不能只靠"本机能编过"：macOS / Linux 的系统 API 分派（钥匙串、
   # networksetup、gsettings、/proc、lsof、pkexec…）只有在真平台上编译与运行
   # 才被验证过。这两个 job 就是那层保护——没有它们，跨平台代码会在下一次

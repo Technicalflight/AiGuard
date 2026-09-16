@@ -15,3 +15,8 @@ sha2 = "0.11"
 hex = "0.4"
 # 敏感内存主动擦除（原文映射表、请求采样在销毁时覆写字节）
 zeroize = { version = "1", features = ["std"] }
+
+# 请求侧性能基准护栏：手写计时（harness = false），零第三方依赖（只许 std）
+[[bench]]
+name = "detect_bench"
+harness = false
