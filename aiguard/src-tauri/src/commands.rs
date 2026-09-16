@@ -75,7 +75,7 @@ pub fn get_rules(state: State<'_, Arc<AppState>>) -> Result<Vec<RuleSpec>, Strin
     load_specs(&state)
 }
 
-/// 编辑规则：`enabled` / `action` / `regex` / `name` 任意组合（None = 不改）。
+/// 编辑规则：`enabled` / `action` / `regex` / `name` / `min_confirm` 任意组合（None = 不改）。
 /// 正则非法时返回 Err（保存前经 Detector::from_specs 校验），不落盘、不生效。
 #[tauri::command]
 pub fn set_rule(
@@ -85,6 +85,7 @@ pub fn set_rule(
     action: Option<String>,
     regex: Option<String>,
     name: Option<String>,
+    min_confirm: Option<u8>,
 ) -> Result<(), String> {
     let mut specs = load_specs(&state)?;
     let spec = specs
@@ -99,6 +100,13 @@ pub fn set_rule(
             return Err(format!("未知动作: {}", v));
         }
         spec.action = v;
+    }
+    if let Some(v) = min_confirm {
+        // 确认次数下限 1~10；校验器类规则（身份证/银行卡/IP）拦截时运行时还有编译期下限 2
+        if !(1..=10).contains(&v) {
+            return Err(format!("拦截确认次数超出范围 1~10: {}", v));
+        }
+        spec.min_confirm = v;
     }
     if let Some(v) = regex {
         spec.regex = v;
@@ -115,6 +123,7 @@ pub fn set_rule(
 
 /// 新增自定义规则，返回更新后的完整规则列表。
 /// `tag` 为占位符标签（可选，仅字母数字下划线，自动转大写；缺省 CUSTOM）。
+/// `min_confirm` 为拦截确认次数（可选，1~10，缺省 1；校验器类规则拦截时运行时下限 2）。
 #[tauri::command]
 pub fn add_custom_rule(
     state: State<'_, Arc<AppState>>,
@@ -122,6 +131,7 @@ pub fn add_custom_rule(
     regex: String,
     action: String,
     tag: Option<String>,
+    min_confirm: Option<u8>,
 ) -> Result<Vec<RuleSpec>, String> {
     let name = name.trim();
     if name.is_empty() {
@@ -132,6 +142,11 @@ pub fn add_custom_rule(
     }
     if !matches!(action.as_str(), "mask" | "block" | "warn") {
         return Err(format!("未知动作: {}", action));
+    }
+    if let Some(v) = min_confirm {
+        if !(1..=10).contains(&v) {
+            return Err(format!("拦截确认次数超出范围 1~10: {}", v));
+        }
     }
     let mut tag_clean: String = tag
         .unwrap_or_default()
@@ -154,6 +169,8 @@ pub fn add_custom_rule(
         action,
         enabled: true,
         builtin: false,
+        // 自定义规则默认确认次数 1（无校验器不做下限提升）
+        min_confirm: min_confirm.unwrap_or(1),
     };
     let mut specs = load_specs(&state)?;
     specs.push(spec);

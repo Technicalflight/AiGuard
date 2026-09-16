@@ -297,17 +297,22 @@ impl AiGuardHandler {
                 let detector = self.state.detector_snapshot();
                 let mut kinds: Vec<String> = Vec::new();
                 let mut hit_count = 0usize;
-                let mut blocked = false;
+                // Block 确认闸门：rule_id → (确认数, 所需次数)，达标才拦截
+                let mut block_confirms: std::collections::HashMap<String, (u32, u32)> =
+                    std::collections::HashMap::new();
                 scrub_json_value(
                     &mut json,
                     &detector,
                     &self.state.vault,
                     &session,
                     &mut kinds,
-                    &mut blocked,
+                    &mut block_confirms,
                     &mut hit_count,
                     force_mask,
                 );
+                let blocked = block_confirms
+                    .values()
+                    .any(|(count, need)| count >= need);
 
                 // 黑名单脱敏动作命中：kinds 追加标记，前端可识别"黑名单命中的脱敏"
                 if blacklist_action.is_some() {
@@ -945,13 +950,17 @@ fn truncate_chars(s: &str, max_bytes: usize) -> String {    if s.len() <= max_by
 
 /// 递归脱敏 JSON 中所有 String 值。
 /// `force_mask = true` 时 Block 规则命中也只脱敏不拦截（黑名单脱敏动作 / 白名单仍脱敏）。
+///
+/// Block 确认闸门：Block 只对达到确认次数的规则生效（`block_confirms` 按 rule_id 聚合
+/// 确认数与所需次数；校验器类规则运行时下限 2，见 `compile_rule`）；未达标命中照常
+/// 脱敏不拦截。黑名单 / 保险柜 Block 不经此闸（用户显式意图，零误报）。
 fn scrub_json_value(
     value: &mut Value,
     detector: &Detector,
     vault: &Vault,
     session: &str,
     kinds: &mut Vec<String>,
-    blocked: &mut bool,
+    block_confirms: &mut std::collections::HashMap<String, (u32, u32)>,
     hit_count: &mut usize,
     force_mask: bool,
 ) {
@@ -963,7 +972,12 @@ fn scrub_json_value(
                 for h in &hits {
                     kinds.push(h.tag.clone());
                     if h.action == Action::Block && !force_mask {
-                        *blocked = true;
+                        // 按规则聚合确认数：达到所需次数才允许拦截
+                        let e = block_confirms
+                            .entry(h.rule_id.clone())
+                            .or_insert((0, (h.min_confirm as u32).max(1)));
+                        e.0 += 1;
+                        e.1 = e.1.max(h.min_confirm as u32);
                     }
                 }
                 *hit_count += hits.len();
@@ -972,12 +986,12 @@ fn scrub_json_value(
         }
         Value::Array(arr) => {
             for v in arr.iter_mut() {
-                scrub_json_value(v, detector, vault, session, kinds, blocked, hit_count, force_mask);
+                scrub_json_value(v, detector, vault, session, kinds, block_confirms, hit_count, force_mask);
             }
         }
         Value::Object(map) => {
             for v in map.values_mut() {
-                scrub_json_value(v, detector, vault, session, kinds, blocked, hit_count, force_mask);
+                scrub_json_value(v, detector, vault, session, kinds, block_confirms, hit_count, force_mask);
             }
         }
         _ => {}
@@ -1262,6 +1276,109 @@ mod request_body_tests {
         assert!(!state.note_client_process("C:\\Tools\\curl.exe".to_string()));
         assert!(!state.note_client_process("   ".to_string()));
         assert_eq!(state.client_processes().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod block_confirm_gate_tests {
+    //! Block 确认闸门验收：只测纯函数 `scrub_json_value`，不构造 HttpContext。
+    //! 误拦归零验收标准 —— 激进预设下，长数字串（订单号 / 时间戳 / uid）不得触发拦截。
+
+    use super::*;
+    use aiguard_core::detector::{apply_preset_to_builtin, default_rule_specs, PRESET_AGGRESSIVE};
+
+    /// 激进预设检测器：银行卡 / 身份证 / API Key 均为 Block（银行卡带 Luhn 校验器）。
+    fn aggressive_detector() -> Detector {
+        let specs = apply_preset_to_builtin(default_rule_specs(), PRESET_AGGRESSIVE);
+        Detector::from_specs(&specs).expect("内置规则必须可编译")
+    }
+
+    /// 对单个 JSON 体跑脱敏，返回是否拦截（与调用点聚合逻辑一致）。
+    fn scrub_body(detector: &Detector, body: &mut Value) -> bool {
+        let vault = Vault::new();
+        let mut block_confirms: std::collections::HashMap<String, (u32, u32)> =
+            std::collections::HashMap::new();
+        let mut kinds: Vec<String> = Vec::new();
+        let mut hit_count = 0usize;
+        scrub_json_value(
+            body,
+            detector,
+            &vault,
+            "sess-gate",
+            &mut kinds,
+            &mut block_confirms,
+            &mut hit_count,
+            false,
+        );
+        block_confirms.values().any(|(count, need)| count >= need)
+    }
+
+    /// 确定性生成 100 条 16~17 位长数字串（订单号 / 时间戳 / uid 形态混合）。
+    /// 多数 Luhn 不通过（正则浮出即被校验器过滤）；碰巧通过的也只出现一次
+    /// （确认数 1 < 2），逐条构造请求体均不得拦截。
+    fn long_digit_strings() -> Vec<String> {
+        (0i64..100)
+            .map(|i| match i % 3 {
+                // 订单号形态：日期前缀 + 序号（16 位）
+                0 => format!("20260916{:08}", i * 7919),
+                // 时间戳形态（16 位）
+                1 => format!("178{:013}", 1_000_000_000_000i64 + i * 104_729),
+                // uid 形态（17 位）
+                _ => format!("{:017}", 31_415_926_535_897_932i64 + i * 2_718_281_828i64),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_long_digit_strings_never_block() {
+        let det = aggressive_detector();
+        for s in long_digit_strings() {
+            let mut body = serde_json::json!({
+                "model": "deepseek-chat",
+                "messages": [
+                    { "role": "user", "content": format!("帮我查一下订单 {}", s) }
+                ]
+            });
+            assert!(
+                !scrub_body(&det, &mut body),
+                "长数字串 {} 不得触发拦截（误拦归零）",
+                s
+            );
+        }
+    }
+
+    #[test]
+    fn test_two_valid_cards_block() {
+        let det = aggressive_detector();
+        // 两个不同合法卡号（Luhn 通过）在同一体内 → 确认数 2 ≥ 2 → 拦截；
+        // 卡号前后不得紧邻 ASCII 数字（数字邻接检查）
+        let mut body = serde_json::json!({
+            "model": "deepseek-chat",
+            "messages": [
+                { "role": "user", "content": "卡号4242424242424242，另一张是5555555555554444，请查收" }
+            ]
+        });
+        assert!(scrub_body(&det, &mut body), "两个合法卡号应达到确认次数并拦截");
+    }
+
+    #[test]
+    fn test_single_valid_card_masks_without_block() {
+        let det = aggressive_detector();
+        let mut body = serde_json::json!({
+            "model": "deepseek-chat",
+            "messages": [
+                { "role": "user", "content": "我的卡号是4111111111111111谢谢" }
+            ]
+        });
+        assert!(!scrub_body(&det, &mut body), "单个合法卡号确认数 1 < 2，不得拦截");
+        // 未达标命中照常脱敏
+        let content = body["messages"][0]["content"].as_str().unwrap();
+        assert!(
+            content.contains("[[PII:BANKCARD:"),
+            "未达标命中必须脱敏，实际: {}",
+            content
+        );
+        assert!(!content.contains("4111111111111111"), "原文不得残留");
     }
 }
 

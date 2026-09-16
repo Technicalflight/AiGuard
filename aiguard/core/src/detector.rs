@@ -113,11 +113,23 @@ pub struct RuleSpec {
     pub enabled: bool,
     /// 是否内置规则
     pub builtin: bool,
+    /// Block 动作的确认次数下限：同一请求中该规则的有效命中达到该次数才拦截，
+    /// 否则只脱敏不拦截。默认 1。校验器类规则（身份证 / 银行卡 / IP）拦截时
+    /// 运行时强制下限 2（见 [`compile_rule`]）。
+    #[serde(default = "default_min_confirm")]
+    pub min_confirm: u8,
+}
+
+/// `min_confirm` 的 serde 默认值（旧持久化 JSON / 旧前端载荷缺省时按 1 兜底）。
+fn default_min_confirm() -> u8 {
+    1
 }
 
 /// 编译后的运行时规则（内部结构，不对外暴露）。
 #[derive(Clone)]
 struct Rule {
+    /// 规则 id（来源 [`RuleSpec::id`]，Block 闸门按规则聚合确认数用）
+    id: String,
     tag: String,
     regex: Regex,
     validate: Option<fn(&str) -> bool>,
@@ -125,6 +137,10 @@ struct Rule {
     digit_adjacent: bool,
     action: Action,
     enabled: bool,
+    /// Block 确认次数下限（校验器类规则拦截时编译期强制 ≥ 2）
+    min_confirm: u32,
+    /// 是否带语义校验器（身份证校验位 / Luhn / IPv4）
+    validated: bool,
 }
 
 /// 一次命中记录。
@@ -137,6 +153,12 @@ pub struct Hit {
     /// 命中起始位置（字符偏移）
     pub start: usize,
     pub action: Action,
+    /// 命中来源规则 id（语义层为空串、保险柜为 "locker"）
+    pub rule_id: String,
+    /// 该规则的 Block 确认次数下限（语义 / 保险柜命中恒为 1）
+    pub min_confirm: u32,
+    /// 命中是否通过语义校验器（语义 / 保险柜命中为 false）
+    pub validated: bool,
 }
 
 /// 内置标签 → 语义校验器映射。
@@ -158,17 +180,31 @@ fn builtin_digit_adjacent(tag: &str) -> bool {
 fn compile_rule(spec: &RuleSpec) -> Result<Rule, String> {
     let regex = Regex::new(&spec.regex)
         .map_err(|e| format!("规则「{}」的正则无效: {}", spec.name, e))?;
-    let tag = spec.tag.trim().to_ascii_uppercase();
-    if tag.is_empty() {
+    let tag_upper = spec.tag.trim().to_ascii_uppercase();
+    if tag_upper.is_empty() {
         return Err(format!("规则「{}」的标签不能为空", spec.name));
     }
+    let validator = builtin_validator(&tag_upper);
+    let action = Action::from_str(&spec.action);
+    // Block 确认次数下限：校验器类规则（身份证 / 银行卡 / IP）拦截时强制 ≥ 2 ——
+    // 正则浮出的命中已通过校验器，但 Luhn 等本身假通过率不可忽视（约 1/10），
+    // 单命中直接拦截会造成批量误拦；未达标时命中照常脱敏不拦截。
+    let min_confirm = if validator.is_some() && action == Action::Block {
+        (spec.min_confirm as u32).max(2)
+    } else {
+        spec.min_confirm as u32
+    };
+    let digit_adjacent = builtin_digit_adjacent(&tag_upper);
     Ok(Rule {
-        tag,
+        id: spec.id.clone(),
+        tag: tag_upper,
         regex,
-        validate: builtin_validator(spec.tag.trim().to_ascii_uppercase().as_str()),
-        digit_adjacent: builtin_digit_adjacent(spec.tag.trim().to_ascii_uppercase().as_str()),
-        action: Action::from_str(&spec.action),
+        validate: validator,
+        digit_adjacent,
+        action,
         enabled: spec.enabled,
+        min_confirm,
+        validated: validator.is_some(),
     })
 }
 
@@ -182,6 +218,8 @@ pub fn default_rule_specs() -> Vec<RuleSpec> {
         action: "mask".to_string(),
         enabled,
         builtin: true,
+        // 内置默认确认次数 1；校验器类规则的拦截下限由 compile_rule 编译期兜底（≥ 2）
+        min_confirm: 1,
     };
     vec![
         // 身份证：6 位地区码 + 19/20 世纪年份 + 月 + 日 + 3 位顺序码 + 校验位
@@ -461,6 +499,9 @@ impl Detector {
                     text_len,
                     start,
                     action: rule.action,
+                    rule_id: rule.id.clone(),
+                    min_confirm: rule.min_confirm,
+                    validated: rule.validated,
                 });
             }
         }
@@ -475,6 +516,10 @@ impl Detector {
                 text_len,
                 start,
                 action: Action::Mask,
+                // 语义命中恒 Mask，不参与 Block 确认闸门
+                rule_id: String::new(),
+                min_confirm: 1,
+                validated: false,
             });
         }
         // 保险柜命中（用户录入敏感值的精确匹配）：动作按条目（默认 Mask，可 Block）。
@@ -487,6 +532,10 @@ impl Detector {
                 text_len,
                 start,
                 action: h.action,
+                // 保险柜是用户录入的精确值，零误报：不经 Block 确认闸门（min_confirm=1）
+                rule_id: "locker".to_string(),
+                min_confirm: 1,
+                validated: false,
             });
         }
         // 按 start 升序；同起点时更长的命中优先，避免同一文本被两个规则各报一次后短者占用区间
@@ -614,6 +663,7 @@ mod tests {
                 action: "block".into(),
                 enabled: true,
                 builtin: false,
+                min_confirm: 1,
             });
             v
         };
@@ -653,6 +703,7 @@ mod tests {
                 action: "mask".into(),
                 enabled: true,
                 builtin: false,
+                min_confirm: 1,
             },
             RuleSpec {
                 id: "builtin.phone".into(),
@@ -662,6 +713,7 @@ mod tests {
                 action: "mask".into(),
                 enabled: true,
                 builtin: true,
+                min_confirm: 1,
             },
         ];
         let det = Detector::from_specs(&specs).unwrap();
@@ -885,6 +937,7 @@ mod tests {
             action: "mask".to_string(),
             enabled: true,
             builtin: false,
+            min_confirm: 1,
         });
         let det = Detector::from_specs(&specs).unwrap();
         let hits = det.scan("这是阿尔法计划的文档");
@@ -943,5 +996,62 @@ mod tests {
         let restored = builtin_spec_by_id("builtin.phone").unwrap();
         assert_eq!(restored.regex, r"1[3-9]\d{9}");
         assert!(restored.enabled);
+    }
+
+    // ─────────── Block 确认闸门 ───────────
+
+    #[test]
+    fn test_rule_spec_serde_backward_compatible() {
+        // 旧持久化 JSON（kv 里的 Vec<RuleSpec>）不含 min_confirm → serde default 兜底为 1
+        let legacy = r#"[{"id":"builtin.idcard","tag":"IDCARD","name":"身份证号","regex":"\\d","action":"mask","enabled":true,"builtin":true}]"#;
+        let specs: Vec<RuleSpec> = serde_json::from_str(legacy).unwrap();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].min_confirm, 1);
+    }
+
+    #[test]
+    fn test_compile_min_confirm_floor_for_validated_block() {
+        // 编译期下限：校验器类规则（身份证 / 银行卡 / IP）拦截时 min_confirm ≥ 2；
+        // 无校验器（apikey）与 Mask 动作（手机号）不受下限影响
+        let aggressive = apply_preset_to_builtin(default_rule_specs(), PRESET_AGGRESSIVE);
+        let det = Detector::from_specs(&aggressive).unwrap();
+        let rules = &det.rules;
+        let idcard = rules.iter().find(|r| r.id == "builtin.idcard").unwrap();
+        assert_eq!(idcard.min_confirm, 2, "身份证（校验器 + Block）下限 2");
+        let bankcard = rules.iter().find(|r| r.id == "builtin.bankcard").unwrap();
+        assert_eq!(bankcard.min_confirm, 2, "银行卡（校验器 + Block）下限 2");
+        let apikey = rules.iter().find(|r| r.id == "builtin.apikey").unwrap();
+        assert_eq!(apikey.min_confirm, 1, "apikey 无校验器，不做下限提升");
+        assert_eq!(apikey.validated, false);
+        let phone = rules.iter().find(|r| r.id == "builtin.phone").unwrap();
+        assert_eq!(phone.min_confirm, 1, "Mask 动作不提升下限");
+        let idcard_spec = aggressive.iter().find(|s| s.id == "builtin.idcard").unwrap();
+        assert_eq!(idcard_spec.min_confirm, 1, "规格本身保持用户值 1，下限只在编译期生效");
+    }
+
+    #[test]
+    fn test_custom_block_rule_respects_spec_min_confirm() {
+        // 自定义 Block 规则（无校验器 tag）：min_confirm = spec 值，不做提升
+        let mut specs = default_rule_specs();
+        specs.push(RuleSpec {
+            id: "custom.blk01".to_string(),
+            tag: "SECRET".to_string(),
+            name: "项目代号".to_string(),
+            regex: "阿尔法计划".to_string(),
+            action: "block".to_string(),
+            enabled: true,
+            builtin: false,
+            min_confirm: 3,
+        });
+        let det = Detector::from_specs(&specs).unwrap();
+        let rule = det.rules.iter().find(|r| r.id == "custom.blk01").unwrap();
+        assert_eq!(rule.min_confirm, 3);
+        assert_eq!(rule.validated, false);
+        // 命中透出 min_confirm / rule_id / validated
+        let hits = det.scan("这是阿尔法计划的文档");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].rule_id, "custom.blk01");
+        assert_eq!(hits[0].min_confirm, 3);
+        assert_eq!(hits[0].validated, false);
     }
 }
