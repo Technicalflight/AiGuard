@@ -19,9 +19,10 @@ AI 回复到达后，在本地流式还原为真实数据 —— **原文永不�
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-important.svg?logo=gnu)](./LICENSE)
 [![License: Commercial](https://img.shields.io/badge/License-Commercial%20Contact-white.svg?logo=github)](https://github.com/Technicalflight/AiGuard/issues)
 
-**[简体中文](./README.md) &nbsp;·&nbsp; [English](./README.en.md)**
+**[简体中文](./README.md) &nbsp;·&nbsp; [English](./README.en.md) &nbsp;·&nbsp; [使用手册](https://docs.qq.com/doc/p/81c44f2ceff3e2366c0dd8348f09599bc37a10f9)**
 
 </div>
+<div align="center"><a href="https://www.producthunt.com/products/aiguard?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-aiguard" target="_blank" rel="noopener noreferrer"><img alt="AiGuard - A local-first AI traffic guard | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1252567&amp;theme=light&amp;t=1789578869778"></a></div>
 
 > [!IMPORTANT]
 > AiGuard 目前处于早期开发阶段（v0.1.x），配置格式与内部接口随时可能变化。项目基于 **AGPL-3.0** 开源——欢迎 Star、Issue 与 PR。
@@ -421,3 +422,15 @@ Should you require a **commercial license** that provides an exemption from the 
 中文说明：本项目社区版采用 **AGPL-3.0** 许可证。你可以自由地使用、学习、修改和分发本项目（包括商业用途），但必须完整遵守 AGPL-3.0 全部条款——尤其是**网络服务条款**：修改后的版本若以网络服务形式提供给他人使用，必须向使用者提供完整的对应源代码。如需**豁免上述开源义务的商业授权**（如闭源部署、OEM 集成），请通过 [GitHub Issues](https://github.com/Technicalflight/AiGuard/issues) 联系作者洽谈。
 
 Copyright © 2026 Technicalflight
+
+---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=technicalflight%2Faiguard&type=date&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=technicalflight/aiguard&type=date&theme=dark&legend=top-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=technicalflight/aiguard&type=date&legend=top-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=technicalflight/aiguard&type=date&legend=top-right" />
+ </picture>
+</a>
