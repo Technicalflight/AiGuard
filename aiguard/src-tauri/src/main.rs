@@ -818,6 +818,11 @@ mod tray_tests {
                 request_hash: String::new(),
                 response_hash: String::new(),
                 probe_id: String::new(),
+                // 迁移新增列的默认值
+                user_label: "none".into(),
+                label_ts: 0.0,
+                rule_id: String::new(),
+                rule_ver: String::new(),
             },
         );
         assert!(line.contains("响应夹带"), "{}", line);

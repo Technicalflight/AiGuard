@@ -1821,6 +1821,11 @@ impl AppState {
                 request_hash: meta.request_hash.clone(),
                 response_hash: meta.response_hash.clone(),
                 probe_id: meta.probe_id.clone(),
+                // 新事件默认未标；规则信息由后续批次回填
+                user_label: "none".into(),
+                label_ts: 0.0,
+                rule_id: String::new(),
+                rule_ver: String::new(),
             });
         }
         let n = events.len();

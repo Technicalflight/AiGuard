@@ -372,6 +372,11 @@ mod tests {
             request_hash: "a1b2c3d4e5f60718".into(),
             response_hash: "1122334455667788".into(),
             probe_id: String::new(),
+            // 迁移新增列的默认值
+            user_label: "none".into(),
+            label_ts: 0.0,
+            rule_id: String::new(),
+            rule_ver: String::new(),
         }
     }
 

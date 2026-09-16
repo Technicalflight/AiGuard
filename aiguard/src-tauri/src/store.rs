@@ -31,6 +31,18 @@ pub struct RequestLog {
     pub req_hash: String,
     /// 是否被拦截（0/1）
     pub blocked: i64,
+    /// 用户反馈标签：none=未标 / fp=误报 / tn=确认
+    #[serde(default)]
+    pub user_label: String,
+    /// 打标签的 Unix 秒（0 = 未标）
+    #[serde(default)]
+    pub label_ts: f64,
+    /// 命中规则 id（如 builtin.bankcard，规则级豁免与 per-rule 统计用）
+    #[serde(default)]
+    pub rule_id: String,
+    /// 命中时的规则版本（规则版本化批次用）
+    #[serde(default)]
+    pub rule_ver: String,
 }
 
 /// 审计事件行（防护信号的落库形态）。
@@ -62,6 +74,37 @@ pub struct AuditEventRow {
     /// 主动核查 id（非核查流量为空）
     #[serde(default)]
     pub probe_id: String,
+    /// 用户反馈标签：none=未标 / fp=误报 / tn=确认
+    #[serde(default)]
+    pub user_label: String,
+    /// 打标签的 Unix 秒（0 = 未标）
+    #[serde(default)]
+    pub label_ts: f64,
+    /// 命中规则 id（如 builtin.bankcard，规则级豁免与 per-rule 统计用）
+    #[serde(default)]
+    pub rule_id: String,
+    /// 命中时的规则版本（规则版本化批次用）
+    #[serde(default)]
+    pub rule_ver: String,
+}
+
+/// 幂等加列：表里缺该列才执行 ALTER TABLE ADD COLUMN。
+///
+/// PRAGMA 无法参数绑定，`table` / `column` / `ddl` 均须来自调用点常量
+/// （本文件内写死的表名与列定义，无外部输入，无注入面）。
+fn ensure_column(conn: &Connection, table: &str, column: &str, ddl: &str) -> Result<(), String> {
+    let sql = format!("PRAGMA table_info({})", table);
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        // table_info 第 2 列是 name
+        let name: String = row.get(1).map_err(|e| e.to_string())?;
+        if name == column {
+            return Ok(());
+        }
+    }
+    let alter = format!("ALTER TABLE {} ADD COLUMN {}", table, ddl);
+    conn.execute_batch(&alter).map_err(|e| e.to_string())
 }
 
 /// SQLite 存储封装（内部用 Mutex 保护连接）。
@@ -84,7 +127,15 @@ impl Store {
                 kinds TEXT NOT NULL DEFAULT '[]',
                 action TEXT NOT NULL DEFAULT 'mask',
                 req_hash TEXT NOT NULL DEFAULT '',
-                blocked INTEGER NOT NULL DEFAULT 0
+                blocked INTEGER NOT NULL DEFAULT 0,
+                -- 用户反馈标签：none=未标 / fp=误报 / tn=确认
+                user_label TEXT NOT NULL DEFAULT 'none',
+                -- 打标签的 Unix 秒（0 = 未标）
+                label_ts REAL NOT NULL DEFAULT 0,
+                -- 命中规则 id（如 builtin.bankcard，规则级豁免与 per-rule 统计用）
+                rule_id TEXT NOT NULL DEFAULT '',
+                -- 命中时的规则版本（规则版本化批次用）
+                rule_ver TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_request_log_ts ON request_log(ts);
             CREATE TABLE IF NOT EXISTS audit_events (
@@ -99,7 +150,12 @@ impl Store {
                 evidence TEXT NOT NULL DEFAULT '',
                 request_hash TEXT NOT NULL DEFAULT '',
                 response_hash TEXT NOT NULL DEFAULT '',
-                probe_id TEXT NOT NULL DEFAULT ''
+                probe_id TEXT NOT NULL DEFAULT '',
+                -- 列语义与 request_log 一致（反馈闭环 / 规则版本化共用）
+                user_label TEXT NOT NULL DEFAULT 'none',
+                label_ts REAL NOT NULL DEFAULT 0,
+                rule_id TEXT NOT NULL DEFAULT '',
+                rule_ver TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_audit_events_ts ON audit_events(ts);
             CREATE INDEX IF NOT EXISTS idx_audit_events_signal ON audit_events(signal_type);
@@ -113,6 +169,21 @@ impl Store {
             "#,
         )
         .map_err(|e| e.to_string())?;
+        // 幂等迁移：CREATE TABLE IF NOT EXISTS 不会给存量库补列，
+        // 这里逐表逐列检查并 ALTER（表名/列名/DDL 全部来自上方常量）。
+        let schema_cols: [(&str, &str, &str); 8] = [
+            ("request_log", "user_label", "user_label TEXT NOT NULL DEFAULT 'none'"),
+            ("request_log", "label_ts", "label_ts REAL NOT NULL DEFAULT 0"),
+            ("request_log", "rule_id", "rule_id TEXT NOT NULL DEFAULT ''"),
+            ("request_log", "rule_ver", "rule_ver TEXT NOT NULL DEFAULT ''"),
+            ("audit_events", "user_label", "user_label TEXT NOT NULL DEFAULT 'none'"),
+            ("audit_events", "label_ts", "label_ts REAL NOT NULL DEFAULT 0"),
+            ("audit_events", "rule_id", "rule_id TEXT NOT NULL DEFAULT ''"),
+            ("audit_events", "rule_ver", "rule_ver TEXT NOT NULL DEFAULT ''"),
+        ];
+        for (table, column, ddl) in schema_cols {
+            ensure_column(&conn, table, column, ddl)?;
+        }
         Ok(Store {
             conn: Mutex::new(conn),
         })
@@ -154,7 +225,8 @@ impl Store {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, ts, host, path, session, kinds, action, req_hash, blocked
+                "SELECT id, ts, host, path, session, kinds, action, req_hash, blocked,
+                        user_label, label_ts, rule_id, rule_ver
                  FROM request_log ORDER BY id DESC LIMIT ?1",
             )
             .map_err(|e| e.to_string())?;
@@ -170,6 +242,10 @@ impl Store {
                     action: row.get(6)?,
                     req_hash: row.get(7)?,
                     blocked: row.get(8)?,
+                    user_label: row.get(9)?,
+                    label_ts: row.get(10)?,
+                    rule_id: row.get(11)?,
+                    rule_ver: row.get(12)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -224,7 +300,8 @@ impl Store {
         params.push(Box::new(limit));
         params.push(Box::new(offset));
         let sql = format!(
-            "SELECT id, ts, host, path, session, kinds, action, req_hash, blocked
+            "SELECT id, ts, host, path, session, kinds, action, req_hash, blocked,
+                    user_label, label_ts, rule_id, rule_ver
              FROM request_log {} ORDER BY id DESC LIMIT ?{} OFFSET ?{}",
             where_sql,
             params.len() - 1,
@@ -244,6 +321,10 @@ impl Store {
                     action: row.get(6)?,
                     req_hash: row.get(7)?,
                     blocked: row.get(8)?,
+                    user_label: row.get(9)?,
+                    label_ts: row.get(10)?,
+                    rule_id: row.get(11)?,
+                    rule_ver: row.get(12)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -421,7 +502,8 @@ impl Store {
         let lim = limit.clamp(1, 1000);
         let sql = format!(
             "SELECT id, ts, sid, host, method, path, signal_type, severity, evidence, \
-             request_hash, response_hash, probe_id FROM audit_events WHERE {} \
+             request_hash, response_hash, probe_id, user_label, label_ts, rule_id, rule_ver \
+             FROM audit_events WHERE {} \
              ORDER BY id DESC LIMIT {}",
             where_clause.join(" AND "),
             lim
@@ -443,6 +525,10 @@ impl Store {
                     request_hash: row.get(9)?,
                     response_hash: row.get(10)?,
                     probe_id: row.get(11)?,
+                    user_label: row.get(12)?,
+                    label_ts: row.get(13)?,
+                    rule_id: row.get(14)?,
+                    rule_ver: row.get(15)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -460,7 +546,8 @@ impl Store {
         let mut stmt = conn
             .prepare(
                 "SELECT id, ts, sid, host, method, path, signal_type, severity, evidence, \
-                 request_hash, response_hash, probe_id FROM audit_events \
+                 request_hash, response_hash, probe_id, user_label, label_ts, rule_id, rule_ver \
+                 FROM audit_events \
                  ORDER BY id DESC LIMIT ?1",
             )
             .map_err(|e| e.to_string())?;
@@ -479,6 +566,10 @@ impl Store {
                     request_hash: row.get(9)?,
                     response_hash: row.get(10)?,
                     probe_id: row.get(11)?,
+                    user_label: row.get(12)?,
+                    label_ts: row.get(13)?,
+                    rule_id: row.get(14)?,
+                    rule_ver: row.get(15)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -691,6 +782,10 @@ mod tests {
             request_hash: "req123".into(),
             response_hash: "resp456".into(),
             probe_id: check.into(),
+            user_label: "none".into(),
+            label_ts: 0.0,
+            rule_id: String::new(),
+            rule_ver: String::new(),
         }
     }
 
@@ -840,6 +935,154 @@ mod tests {
                 .map(|(_, n)| *n),
             Some(2)
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 手工建「旧结构」库（不含新四列），Store::open 打开后必须补齐列且旧数据可读。
+    #[test]
+    fn test_migration_adds_columns_to_legacy_db() {
+        let dir = tmp_dir();
+        let db_path = dir.join("legacy.db");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE request_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                host TEXT NOT NULL,
+                path TEXT NOT NULL,
+                session TEXT NOT NULL,
+                kinds TEXT NOT NULL DEFAULT '[]',
+                action TEXT NOT NULL DEFAULT 'mask',
+                req_hash TEXT NOT NULL DEFAULT '',
+                blocked INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL NOT NULL,
+                sid TEXT NOT NULL DEFAULT '',
+                host TEXT NOT NULL DEFAULT '',
+                method TEXT NOT NULL DEFAULT '',
+                path TEXT NOT NULL DEFAULT '',
+                signal_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                evidence TEXT NOT NULL DEFAULT '',
+                request_hash TEXT NOT NULL DEFAULT '',
+                response_hash TEXT NOT NULL DEFAULT '',
+                probe_id TEXT NOT NULL DEFAULT ''
+            );
+            INSERT INTO request_log (ts, host, path, session, kinds, action, req_hash, blocked)
+            VALUES ('2025-01-01T00:00:00Z', 'api.openai.com', '/v1/chat', 's1', '[]', 'mask', 'abc', 0),
+                   ('2025-01-02T00:00:00Z', 'a.com', '/p', 's2', '[]', 'block', 'def', 1);
+            INSERT INTO audit_events (ts, sid, host, method, path, signal_type, severity, evidence)
+            VALUES (100.0, 's1', 'a.com', 'POST', '/p', 'error_leak', 'HIGH', 'e1'),
+                   (101.0, 's2', 'b.com', 'GET', '/q', 'sse_anomaly', 'LOW', 'e2');
+            "#,
+        )
+        .unwrap();
+        drop(conn);
+
+        let store = Store::open(&db_path).unwrap();
+
+        // 两表都应有新四列
+        let chk = rusqlite::Connection::open(&db_path).unwrap();
+        for table in ["request_log", "audit_events"] {
+            let mut stmt = chk
+                .prepare(&format!("PRAGMA table_info({})", table))
+                .unwrap();
+            let names: Vec<String> = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect();
+            for col in ["user_label", "label_ts", "rule_id", "rule_ver"] {
+                assert!(
+                    names.iter().any(|n| n == col),
+                    "{} 迁移后缺列 {}",
+                    table,
+                    col
+                );
+            }
+        }
+        drop(chk);
+
+        // 旧行能被 list 函数读出且新列取默认值
+        let logs = store.list_requests(10).unwrap();
+        assert_eq!(logs.len(), 2);
+        for l in &logs {
+            assert_eq!(l.user_label, "none");
+            assert_eq!(l.label_ts, 0.0);
+            assert_eq!(l.rule_id, "");
+            assert_eq!(l.rule_ver, "");
+        }
+        let evs = store.fetch_audit_events_desc(10).unwrap();
+        assert_eq!(evs.len(), 2);
+        for e in &evs {
+            assert_eq!(e.user_label, "none");
+            assert_eq!(e.label_ts, 0.0);
+            assert_eq!(e.rule_id, "");
+            assert_eq!(e.rule_ver, "");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 全新库：插入后读回默认值正确（DB 端 DEFAULT 兜底）。
+    #[test]
+    fn test_new_db_default_label_values() {
+        let dir = tmp_dir();
+        let store = Store::open(&dir.join("test.db")).unwrap();
+        store
+            .log_request(
+                "2025-01-01T00:00:00Z",
+                "api.openai.com",
+                "/v1/chat/completions",
+                "127.0.0.1:12345",
+                r#"["PHONE"]"#,
+                "mask",
+                "abcdef1234567890",
+                false,
+            )
+            .unwrap();
+        let logs = store.list_requests(10).unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].user_label, "none");
+        assert_eq!(logs[0].label_ts, 0.0);
+        assert_eq!(logs[0].rule_id, "");
+        assert_eq!(logs[0].rule_ver, "");
+
+        // 审计事件走 INSERT 省略新列，靠 DEFAULT 兜底
+        store
+            .insert_audit_events(&[row(1.0, "error_leak", "HIGH", "")])
+            .unwrap();
+        let evs = store.fetch_audit_events_desc(10).unwrap();
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].user_label, "none");
+        assert_eq!(evs[0].label_ts, 0.0);
+        assert_eq!(evs[0].rule_id, "");
+        assert_eq!(evs[0].rule_ver, "");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 同一库文件连续多次 open：迁移重复执行必须安全（幂等）。
+    #[test]
+    fn test_reopen_migration_idempotent() {
+        let dir = tmp_dir();
+        let db = dir.join("test.db");
+        {
+            let store = Store::open(&db).unwrap();
+            store
+                .log_request("2025-01-01T00:00:00Z", "a.com", "/p", "s1", "[]", "mask", "h1", false)
+                .unwrap();
+        }
+        // 第二次 open：列已存在，ensure_column 应直接跳过
+        {
+            let store = Store::open(&db).unwrap();
+            let logs = store.list_requests(10).unwrap();
+            assert_eq!(logs.len(), 1);
+            assert_eq!(logs[0].user_label, "none");
+        }
+        // 第三次 open：再次确认不报错
+        Store::open(&db).unwrap();
         std::fs::remove_dir_all(&dir).ok();
     }
 }
