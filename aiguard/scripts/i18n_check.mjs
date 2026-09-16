@@ -42,22 +42,50 @@ function readDict(file) {
   return map;
 }
 
-const uiDict = readDict("src/i18n-dict-ui.ts");
-const backendDict = readDict("src/i18n-dict-backend.ts");
+// 词典文件清单：readDict 的三个来源，同时作为前端递归扫描的排除依据——
+// 词典是纯「"键": "译文"」字面量，没有 t() 调用点，不参与调用方扫描。
+const DICT_FILES = ["src/i18n-dict-ui.ts", "src/i18n-dict-backend.ts", "src/i18n-dict-runtime.ts"];
+
+const uiDict = readDict(DICT_FILES[0]);
+const backendDict = readDict(DICT_FILES[1]);
 // 手工维护的运行期词典（系统错误原文等）。它的键本来就没有调用点，
 // 所以只查「有没有漏翻译」，不参与孤儿键检查。
-const runtimeDict = readDict("src/i18n-dict-runtime.ts");
+const runtimeDict = readDict(DICT_FILES[2]);
 
 // ─────────── 1. 前端调用点 ───────────
 //
-// 必须扫**所有**含 t() 调用的前端文件，不能只看 App.tsx：
-//  - `src/api.ts` 的 pickPath 要把标题/过滤器名交给系统原生文件对话框
-//    （不经过 React 渲染），那几处 t() 是唯一的翻译点。
-//  - `src/i18n.ts` 的 syncDocumentLocale 要设置 `document.title`，
-//    这也是一个不经过 React 渲染的翻译点（浏览器标签页标题）。
-// 漏扫会让这些键被误判成「没有调用点的孤儿键」。
+// 必须扫**所有**含 t() 调用的前端文件，不能只看 App.tsx。至少这些是
+// 不经过 React 渲染的翻译点：
+//  - `src/api.ts` 的 pickPath 要把标题/过滤器名交给系统原生文件对话框；
+//  - `src/i18n.ts` 的 syncDocumentLocale 要设置 `document.title`
+//    （浏览器标签页标题）。
+// 漏扫会让这些键被误判成「没有调用点的孤儿键」。所以这里不做硬编码清单，
+// 而是递归扫描 src/ 下所有 .ts/.tsx（排除词典文件），前端将来拆分出的
+// 新文件会自动纳入检查，不会再出现「新文件逃过检查且 check 全绿」。
 
-const FRONTEND_FILES = ["src/App.tsx", "src/api.ts", "src/i18n.ts"];
+/** 递归收集 root 下所有 .ts/.tsx，排除词典文件（DICT_FILES），路径以 / 分隔。 */
+function listFrontendFiles(root) {
+  const out = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = `${dir}/${e.name}`;
+      if (e.isDirectory()) walk(p);
+      else if (/\.(ts|tsx)$/.test(e.name) && !DICT_FILES.includes(p)) out.push(p);
+    }
+  })(root);
+  return out.sort();
+}
+
+const FRONTEND_FILES = listFrontendFiles("src");
+
+// 扫描自检：扫描路径写错（如 cwd 不在仓库根）会扫到 0 个文件，used 集合为空、
+// 各项检查全部「通过」——比报错更危险的全绿假象。低于下限直接失败。
+if (FRONTEND_FILES.length < 3) {
+  console.error(
+    `递归扫描 src/ 只找到 ${FRONTEND_FILES.length} 个 .ts/.tsx 文件（预期 ≥ 3），扫描路径大概率写错，拒绝继续以免全绿假象。`
+  );
+  process.exit(1);
+}
 const used = new Set();
 
 /**
