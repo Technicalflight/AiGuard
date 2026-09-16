@@ -20,7 +20,7 @@ real data locally — **the original text never leaves the machine and never tou
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-important.svg?logo=gnu)](./LICENSE)
 [![License: Commercial](https://img.shields.io/badge/License-Commercial%20Contact-white.svg?logo=github)](https://github.com/Technicalflight/AiGuard/issues)
 
-**[简体中文](./README.md) &nbsp;·&nbsp; [English](./README.en.md)**
+**[简体中文](./README.md) &nbsp;·&nbsp; [English](./README.en.md) &nbsp;·&nbsp; [Documentation](https://docs.qq.com/doc/p/81c44f2ceff3e2366c0dd8348f09599bc37a10f9)**
 
 </div>
 
