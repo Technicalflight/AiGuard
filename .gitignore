@@ -1,25 +1,73 @@
-# ─────────── 工作区根级忽略 ───────────
-# 注意：aiguard/ 下有它自己的 .gitignore（node_modules/、dist/、target/、src-tauri/gen/ 等）。
-# 本文件只管根目录，以及那些会污染仓库的临时产物。
+# ═══════════════════════════════════════════════════════════════
+#  AiGuard .gitignore
+#
+#  原则：只让「构建与运行这个项目本身需要的东西」入库。
+#  凡是本地状态、构建产物、编辑器/系统垃圾、密钥与证书，一律屏蔽。
+# ═══════════════════════════════════════════════════════════════
 
-# 调试与 QA 过程的临时输出（_a3c.log、_r4_*.txt、qa_*.log 等）
-_*.log
-_*.txt
-qa_*.log
+# ─────────── 依赖 ───────────
+node_modules/
 
-# 本次改造的临时目录：改写前快照 + 旧日志归档
-_t/
+# ─────────── 构建产物 ───────────
+# Vite 前端产物；Rust workspace 与 src-tauri 的编译目录
+dist/
+dist-ssr/
+target/
+src-tauri/target/
 
-# Agent 记忆目录：属于本机状态，且含项目内部细节，不入库
-.workbuddy/
-.workbuddy-ai/
+# Tauri CLI 生成的 schema / capability 中间产物（由 build.rs 重新生成）
+src-tauri/gen/
 
-# 编辑器 / 系统
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-*.swp
-
-# Vite 临时文件
+# Vite 的临时配置文件（每次启动重写，带时间戳）
 vite.config.ts.timestamp-*.mjs
+
+# ─────────── 日志与调试 ───────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─────────── 本地工具产物 ───────────
+# 图标 / 截图生成脚本依赖的中间文件（scripts/*.py、*.cjs 会在本地写出来）
+.pil_local/
+py_check.txt
+snap.txt
+
+# ─────────── 运行时本地状态 ───────────
+# 审计库与配置在用户应用数据目录，正常不会出现在仓库里；
+# 这里兜底，防止调试时手滑把本地数据库提交上来。
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# ─────────── 环境变量 ───────────
+.env
+.env.local
+.env.*.local
+
+# ─────────── 密钥与证书（绝不入库）───────────
+# 运行期生成的 CA 私钥 / 证书只应存在于本机用户目录；
+# 仓库里出现它们等于把「能解密任意 HTTPS」的能力公开出去。
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
+# ─────────── 编辑器 / IDE ───────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.code-workspace
+
+# ─────────── 操作系统 ───────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+desktop.ini
