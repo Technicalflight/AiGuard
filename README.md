@@ -19,7 +19,7 @@ AI 回复到达后，在本地流式还原为真实数据 —— **原文永不�
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-important.svg?logo=gnu)](./LICENSE)
 [![License: Commercial](https://img.shields.io/badge/License-Commercial%20Contact-white.svg?logo=github)](https://github.com/Technicalflight/AiGuard/issues)
 
-**[简体中文](./README.md) &nbsp;·&nbsp; [English](./README.en.md)**
+**[简体中文](./README.md) &nbsp;·&nbsp; [English](./README.en.md) &nbsp;·&nbsp; [使用手册](https://docs.qq.com/doc/p/81c44f2ceff3e2366c0dd8348f09599bc37a10f9)**
 
 </div>
 <div align="center"><a href="https://www.producthunt.com/products/aiguard?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-aiguard" target="_blank" rel="noopener noreferrer"><img alt="AiGuard - A local-first AI traffic guard | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1252567&amp;theme=light&amp;t=1789578869778"></a></div>
