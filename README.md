@@ -421,3 +421,15 @@ Should you require a **commercial license** that provides an exemption from the 
 中文说明：本项目社区版采用 **AGPL-3.0** 许可证。你可以自由地使用、学习、修改和分发本项目（包括商业用途），但必须完整遵守 AGPL-3.0 全部条款——尤其是**网络服务条款**：修改后的版本若以网络服务形式提供给他人使用，必须向使用者提供完整的对应源代码。如需**豁免上述开源义务的商业授权**（如闭源部署、OEM 集成），请通过 [GitHub Issues](https://github.com/Technicalflight/AiGuard/issues) 联系作者洽谈。
 
 Copyright © 2026 Technicalflight
+
+---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=technicalflight%2Faiguard&type=date&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=technicalflight/aiguard&type=date&theme=dark&legend=top-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=technicalflight/aiguard&type=date&legend=top-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=technicalflight/aiguard&type=date&legend=top-right" />
+ </picture>
+</a>
