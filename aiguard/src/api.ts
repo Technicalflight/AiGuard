@@ -189,6 +189,8 @@ export interface RuleSpec {
   enabled: boolean;
   /** 内置规则不可删除，可编辑 / 恢复默认 */
   builtin: boolean;
+  /** Block 动作的拦截确认次数下限：同一请求中该规则的有效命中达到该次数才拦截，否则只脱敏；校验器类规则（身份证/银行卡/IP）拦截时运行时下限 2 */
+  min_confirm: number;
 }
 
 export interface WhitelistEntry {
@@ -304,17 +306,17 @@ const MOCK_LOGS: RequestLog[] = [
 ];
 
 const MOCK_RULES: RuleSpec[] = [
-  { id: "builtin.idcard", tag: "IDCARD", name: "身份证号", regex: "[1-9]\\d{5}(19|20)\\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])\\d{3}[\\dXx]", action: "mask", enabled: true, builtin: true },
-  { id: "builtin.phone", tag: "PHONE", name: "手机号", regex: "1[3-9]\\d{9}", action: "mask", enabled: true, builtin: true },
-  { id: "builtin.bankcard", tag: "BANKCARD", name: "银行卡号", regex: "\\d{16,19}", action: "mask", enabled: true, builtin: true },
-  { id: "builtin.email", tag: "EMAIL", name: "邮箱", regex: "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", action: "mask", enabled: true, builtin: true },
-  { id: "builtin.apikey", tag: "APIKEY", name: "API 密钥", regex: "sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}", action: "mask", enabled: true, builtin: true },
-  { id: "builtin.ip", tag: "IP", name: "IP 地址", regex: "\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b", action: "warn", enabled: true, builtin: true },
+  { id: "builtin.idcard", tag: "IDCARD", name: "身份证号", regex: "[1-9]\\d{5}(19|20)\\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])\\d{3}[\\dXx]", action: "mask", enabled: true, builtin: true, min_confirm: 1 },
+  { id: "builtin.phone", tag: "PHONE", name: "手机号", regex: "1[3-9]\\d{9}", action: "mask", enabled: true, builtin: true, min_confirm: 1 },
+  { id: "builtin.bankcard", tag: "BANKCARD", name: "银行卡号", regex: "\\d{16,19}", action: "mask", enabled: true, builtin: true, min_confirm: 1 },
+  { id: "builtin.email", tag: "EMAIL", name: "邮箱", regex: "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", action: "mask", enabled: true, builtin: true, min_confirm: 1 },
+  { id: "builtin.apikey", tag: "APIKEY", name: "API 密钥", regex: "sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}", action: "mask", enabled: true, builtin: true, min_confirm: 1 },
+  { id: "builtin.ip", tag: "IP", name: "IP 地址", regex: "\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b", action: "warn", enabled: true, builtin: true, min_confirm: 1 },
   // name 与 regex 都是**用户数据**：name 是用户给自己的规则起的标签（会被翻译，
   // 与内置规则名同样走 tb()）；regex 是用户写的正则**原文**，绝不能翻译——
   // 翻译正则等于改掉用户配置的语义。所以「阿尔法计划|贝塔计划」在英文界面下
   // 保持原样是正确行为，不是漏译。
-  { id: "custom.demo0001", tag: "PROJECT", name: "内部项目代号", regex: "阿尔法计划|贝塔计划", action: "mask", enabled: true, builtin: false },
+  { id: "custom.demo0001", tag: "PROJECT", name: "内部项目代号", regex: "阿尔法计划|贝塔计划", action: "mask", enabled: true, builtin: false, min_confirm: 1 },
 ];
 
 const MOCK_WHITELIST: WhitelistEntry[] = [
@@ -397,7 +399,7 @@ export async function getRules(): Promise<RuleSpec[]> {
 
 export async function setRule(
   id: string,
-  patch: { enabled?: boolean; action?: string; regex?: string; name?: string }
+  patch: { enabled?: boolean; action?: string; regex?: string; name?: string; min_confirm?: number }
 ): Promise<void> {
   if (!isTauri()) return;
   return tauriInvoke<void>("set_rule", { id, ...patch });
@@ -407,10 +409,11 @@ export async function addCustomRule(
   name: string,
   regex: string,
   action: string,
-  tag?: string
+  tag?: string,
+  minConfirm?: number
 ): Promise<void> {
   if (!isTauri()) return;
-  return tauriInvoke<void>("add_custom_rule", { name, regex, action, tag });
+  return tauriInvoke<void>("add_custom_rule", { name, regex, action, tag, min_confirm: minConfirm });
 }
 
 export async function deleteRule(id: string): Promise<void> {

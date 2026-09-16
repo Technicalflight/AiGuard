@@ -233,6 +233,13 @@ function actionOptions(): DropdownOption[] {
   ];
 }
 
+/** 拦截确认次数输入收敛：整数、范围 1~10，非法输入保持原值。 */
+function clampMinConfirm(raw: string, prev: number): number {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n)) return prev;
+  return Math.min(10, Math.max(1, n));
+}
+
 function ChevronDown() {
   return (
     <svg viewBox="0 0 12 12" fill="none">
@@ -2489,10 +2496,10 @@ function RulesPage() {
   const [wl, setWl] = useState<WhitelistEntry[]>([]);
   // 编辑态（自定义弹窗）
   const [editTarget, setEditTarget] = useState<RuleSpec | null>(null);
-  const [editDraft, setEditDraft] = useState({ name: "", regex: "", action: "mask" });
+  const [editDraft, setEditDraft] = useState({ name: "", regex: "", action: "mask", minConfirm: 1 });
   const [editErr, setEditErr] = useState("");
   // 新增自定义规则
-  const [newRule, setNewRule] = useState({ name: "", tag: "", regex: "", action: "mask" });
+  const [newRule, setNewRule] = useState({ name: "", tag: "", regex: "", action: "mask", minConfirm: 1 });
   const [newErr, setNewErr] = useState("");
   // 白名单新增表单
   const [wlForm, setWlForm] = useState<{ kind: "domain" | "process"; pattern: string; scrub: boolean }>({
@@ -2552,7 +2559,7 @@ function RulesPage() {
 
   const startEdit = (r: RuleSpec) => {
     setEditTarget(r);
-    setEditDraft({ name: r.name, regex: r.regex, action: r.action });
+    setEditDraft({ name: r.name, regex: r.regex, action: r.action, minConfirm: r.min_confirm });
     setEditErr("");
   };
 
@@ -2564,6 +2571,7 @@ function RulesPage() {
         name: editDraft.name,
         regex: editDraft.regex,
         action: editDraft.action,
+        min_confirm: editDraft.minConfirm,
       });
       setEditTarget(null);
       await refresh();
@@ -2575,8 +2583,8 @@ function RulesPage() {
   const addRule = async () => {
     setNewErr("");
     try {
-      await addCustomRule(newRule.name, newRule.regex, newRule.action, newRule.tag || undefined);
-      setNewRule({ name: "", tag: "", regex: "", action: "mask" });
+      await addCustomRule(newRule.name, newRule.regex, newRule.action, newRule.tag || undefined, newRule.minConfirm);
+      setNewRule({ name: "", tag: "", regex: "", action: "mask", minConfirm: 1 });
       await refresh();
     } catch (e) {
       setNewErr(errMsg(e));
@@ -2770,6 +2778,24 @@ function RulesPage() {
               onChange={(v) => setNewRule({ ...newRule, action: v })}
             />
           </div>
+          {newRule.action === "block" && (
+            <div className="field">
+              <span className="field-label">{t("拦截确认次数")}</span>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={10}
+                value={newRule.minConfirm}
+                onChange={(e) =>
+                  setNewRule({ ...newRule, minConfirm: clampMinConfirm(e.target.value, newRule.minConfirm) })
+                }
+              />
+              <span className="muted" style={{ fontSize: 12 }}>
+                {t("校验器类规则（身份证号/银行卡号/IP 地址）拦截生效下限为 2")}
+              </span>
+            </div>
+          )}
           <div className="field" style={{ alignSelf: "end" }}>
             <button className="btn primary" onClick={addRule}>
               {t("添加规则")}
@@ -3011,6 +3037,24 @@ function RulesPage() {
               onChange={(v) => setEditDraft({ ...editDraft, action: v })}
             />
           </div>
+          {editDraft.action === "block" && (
+            <div className="field">
+              <span className="field-label">{t("拦截确认次数")}</span>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={10}
+                value={editDraft.minConfirm}
+                onChange={(e) =>
+                  setEditDraft({ ...editDraft, minConfirm: clampMinConfirm(e.target.value, editDraft.minConfirm) })
+                }
+              />
+              <span className="muted" style={{ fontSize: 12 }}>
+                {t("校验器类规则（身份证号/银行卡号/IP 地址）拦截生效下限为 2")}
+              </span>
+            </div>
+          )}
           {editErr && <div className="form-err">{editErr}</div>}
           {editTarget.builtin && <div className="muted">{t("内置规则可修改，修改后可随时在卡片上「恢复默认」。")}</div>}
         </Modal>
