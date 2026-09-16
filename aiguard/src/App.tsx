@@ -3788,18 +3788,21 @@ function AuditPage() {
         {t("出于隐私保护，日志仅记录命中类型与哈希，不保存任何原文")}
       </div>
       {fp && (fp.per_signal.length > 0 || fp.per_rule.length > 0) && (
-        <div className="card" style={{ marginBottom: 14 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+        /* 表格嵌在双栏 div 内而非卡片直接子代，.card:has(> table.data) 不命中，
+           必须显式 card-pad 提供内边距，否则标题与表格贴边框 */
+        <div className="card card-pad" style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 12 }}>
             <strong>{t("反馈统计")}</strong>
             <span className="muted" style={{ fontSize: 12 }}>{t("近 30 天")}</span>
           </div>
-          <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 300 }}>
-              <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+              {/* paddingLeft 14 与 table.data 单元格内边距对齐，标签与表头文字同一起线 */}
+              <div className="muted" style={{ fontSize: 12, marginBottom: 6, paddingLeft: 14 }}>
                 {t("按防护点")}
               </div>
               {fp.per_signal.length === 0 ? (
-                <div className="empty">{t("暂无记录")}</div>
+                <div className="empty-inset">{t("暂无记录")}</div>
               ) : (
               <table className="data">
                 <thead>
@@ -3830,11 +3833,11 @@ function AuditPage() {
               )}
             </div>
             <div style={{ flex: 1, minWidth: 300 }}>
-              <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 6, paddingLeft: 14 }}>
                 {t("按规则")}
               </div>
               {fp.per_rule.length === 0 ? (
-                <div className="empty">{t("暂无记录")}</div>
+                <div className="empty-inset">{t("暂无记录")}</div>
               ) : (
               <table className="data">
                 <thead>

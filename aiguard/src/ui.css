@@ -1225,6 +1225,17 @@ button.btn:disabled {
   font-size: 13px;
 }
 
+/* 卡片列内空态（反馈统计双栏等）：比全局 .empty 紧凑且有浅底容器感，
+   上下 28px 使其与并排「表头 + 单行数据」的表格高度接近，两栏视觉平衡 */
+.empty-inset {
+  padding: 28px 14px;
+  text-align: center;
+  color: var(--ink-2);
+  font-size: 13px;
+  background: var(--bg);
+  border-radius: 8px;
+}
+
 .empty .empty-icon {
   width: 44px;
   height: 44px;
